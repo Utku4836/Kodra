@@ -1,0 +1,646 @@
+/* ===== RESET ===== */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+}
+
+/* ===== FONT ===== */
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("./vendor/fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("./vendor/fonts/jetbrains-mono-latin-500-normal.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("./vendor/fonts/jetbrains-mono-latin-700-normal.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ===== COLOR PALETTE � macOS Terminal Dark ===== */
+:root {
+  --bg-base: #0d0d0d;          /* Ana arka plan � siyaha yakın koyu */
+  --bg-window: #111111;        /* Pencere yüzeyi */
+
+  /* Yazı hiyerar�xisi */
+  --fg-primary: #e2e2e2;       /* Ana metin � parlak açık gri/beyaz */
+  --fg-secondary: #888888;     /* İkincil metin � orta gri */
+  --fg-muted: #555555;         /* Sönük */
+
+  /* Accent */
+  --accent-green: #4ade80;     /* Nane ye�xili � success/�S */
+
+  /* Trafik lambası renkleri */
+  --traffic-red: #ff5f56;
+  --traffic-yellow: #ffbd2e;
+  --traffic-green: #27c93f;
+
+  /* Border � çok ince */
+  --border: #1f1f1f;
+  --border-soft: #1a1a1a;
+
+  /* Radius */
+  --radius-window: 14px;
+  --radius-sm: 8px;
+
+  /* Padding */
+  --pad-content: 24px;
+}
+
+/* ===== APP LAYOUT � macOS terminal pencere ===== */
+.app {
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+  background: var(--bg-base);
+  border-radius: var(--radius-window);
+  overflow: hidden;
+  -webkit-app-region: no-drag;
+  /* �!ok ince border + hafif gölge */
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+}
+
+/* ===== TITLE BAR � macOS stil ===== */
+.title-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 40px;
+  padding: 0 18px;
+  flex-shrink: 0;
+  -webkit-app-region: drag;
+  background: transparent;
+}
+
+/* Sol � trafik lambaları */
+.traffic-lights {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+}
+
+.traffic-light {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  position: relative;
+  transition: opacity 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.traffic-light:hover {
+  opacity: 0.85;
+}
+
+.traffic-light.red { background: var(--traffic-red); }
+.traffic-light.yellow { background: var(--traffic-yellow); }
+.traffic-light.green { background: var(--traffic-green); }
+
+/* Hover'da ikon � macOS gibi */
+.traffic-light .icon {
+  font-size: 9px;
+  font-weight: 700;
+  color: rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  transition: opacity 0.1s ease;
+  line-height: 1;
+  font-family: "JetBrains Mono", monospace;
+}
+
+.traffic-lights:hover .traffic-light .icon {
+  opacity: 1;
+}
+
+/* Orta � dizin yolu */
+.title-bar-center .path {
+  font-family: "JetBrains Mono", "Segoe UI Symbol", "Cascadia Code", "Consolas", monospace;
+  font-size: 12px;
+  font-weight: 400;
+  color: #666666;
+  letter-spacing: -0.01em;
+}
+
+/* Sa�x � model adı */
+.title-bar-right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 60px;
+}
+
+.model-label {
+  font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 260px;
+}
+
+.token-label {
+  font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+  font-size: 10px;
+  font-weight: 400;
+  color: #4a4a4a;
+  margin-right: 12px;
+  white-space: nowrap;
+}
+
+/* ===== MAIN AREA � Terminal içeri�xi ===== */
+.main-area {
+  flex: 1;
+  display: flex;
+  background: transparent;
+  overflow: hidden;
+  padding: 0 var(--pad-content);
+}
+
+.terminal {
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
+/* ===== BOTTOM BAR � Komut input alanı ===== */
+.bottom-bar {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 var(--pad-content);
+  flex-shrink: 0;
+  background: transparent;
+}
+
+.command-input-wrap {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 8px;
+}
+
+.command-prompt {
+  font-family: "JetBrains Mono", "Segoe UI Symbol", "Cascadia Code", "Consolas", monospace;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--fg-secondary);
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.command-input {
+  flex: 1;
+  font-family: "JetBrains Mono", "Segoe UI Symbol", "Cascadia Code", "Consolas", monospace;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--fg-primary);
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 0;
+  caret-color: var(--fg-primary);
+}
+
+.command-input::selection {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.command-input:disabled {
+  opacity: 0.5;
+}
+
+/* ===== API MODAL � API key giri�xi ===== */
+.api-window {
+  padding: 24px 20px;
+  gap: 8px;
+}
+
+.modal-api-field {
+  padding: 0 0 12px;
+}
+
+.modal-api-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 28px;
+}
+
+.modal-api-subtext {
+  font-family: "JetBrains Mono", "Segoe UI Symbol", "Cascadia Code", "Consolas", monospace;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--fg-muted);
+}
+
+.modal-api-error {
+  font-family: "JetBrains Mono", "Segoe UI Symbol", "Cascadia Code", "Consolas", monospace;
+  font-size: 10px;
+  font-weight: 400;
+  color: #ef4444;
+}
+
+#api-key-input.error {
+  border-bottom: 1px solid #ef4444;
+  animation: shake 0.3s ease;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
+}
+
+/* ===== CURSOR FIX � sabit blok imleci gizle ===== */
+.xterm .xterm-cursor,
+.xterm .xterm-cursor-layer {
+  visibility: hidden !important;
+  opacity: 0 !important;
+}
+
+/* ===== SCROLLBAR FIX — hiçbir scrollbar görünmesin ===== */
+*::-webkit-scrollbar {
+  width: 0px !important;
+  height: 0px !important;
+  display: none !important;
+}
+
+* {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+}
+
+/* xterm özel — kesin gizle */
+.xterm-viewport::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+}
+
+.xterm-viewport {
+  scrollbar-width: none !important;
+  overflow-y: auto !important;
+}
+
+/* ===== SUGGEST PANEL � komut/model/provider önerileri ===== */
+.suggest-panel {
+  position: absolute;
+  bottom: 48px;
+  left: 24px;
+  right: 24px;
+  z-index: 20;
+  background: #0d0d0d; /* arka planla tamamen aynı */
+  border: 1px solid #2a2a2a;
+  border-radius: 10px;
+  padding: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+  animation: setup-fade 0.12s ease;
+}
+
+.suggest-item {
+  font-family: "JetBrains Mono", "Segoe UI Symbol", "Cascadia Code", "Consolas", monospace;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--fg-secondary);
+  padding: 8px 12px;
+  border-radius: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.02s ease, color 0.02s ease;
+}
+
+/* Mouse seçimi kapalı � sadece klavye active */
+.suggest-item.active {
+  background: #1d1d1d;
+  color: #d4d4d4;
+}
+
+.suggest-item .suggest-type {
+  color: var(--fg-muted);
+  font-size: 10px;
+  margin-left: 8px;
+}
+
+/* ===== MODAL � model/provider seçim penceresi ===== */
+.modal {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6); /* yarı saydam karartma */
+  z-index: 30;
+  animation: setup-fade 0.15s ease;
+}
+
+.modal-window {
+  display: flex;
+  flex-direction: column;
+  width: min(480px, 82%);
+  max-height: 62%;
+  background: #111111; /* terminal ile aynı ton */
+  border: 1px solid #2a2a2a;
+  border-radius: 14px; /* terminal kö�xeleriyle aynı */
+  overflow: hidden;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.7);
+}
+
+.modal-search {
+  padding: 10px 14px;
+  border-bottom: 1px solid #1f1f1f;
+  flex-shrink: 0;
+}
+
+.modal-search-input {
+  width: 100%;
+  font-family: "JetBrains Mono", "Segoe UI Symbol", "Cascadia Code", "Consolas", monospace;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--fg-primary);
+  background: transparent;
+  border: none;
+  outline: none;
+  caret-color: var(--fg-primary);
+}
+
+.modal-search-input::placeholder {
+  color: var(--fg-muted);
+  opacity: 0.5;
+}
+
+.modal-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.modal-category {
+  font-family: "JetBrains Mono", "Segoe UI Symbol", "Cascadia Code", "Consolas", monospace;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--fg-muted);
+  padding: 8px 10px 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  user-select: none;
+}
+
+.modal-item {
+  font-family: "JetBrains Mono", "Segoe UI Symbol", "Cascadia Code", "Consolas", monospace;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--fg-secondary);
+  padding: 8px 12px;
+  border-radius: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: none;
+  transition: background 0.02s ease, color 0.02s ease;
+}
+
+/* Sadece klavye active � hover/mouse seçimi yok */
+.modal-item.active {
+  background: #1d1d1d;
+  color: #d4d4d4;
+}
+
+/* ===== APPROVAL MODAL — tool izin onayı ===== */
+.approval-window {
+  width: min(520px, 85%);
+  padding: 20px;
+  gap: 12px;
+}
+
+.approval-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #1f1f1f;
+}
+
+.approval-tool {
+  font-family: "JetBrains Mono", "Segoe UI Symbol", monospace;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--fg-primary);
+}
+
+.approval-risk {
+  font-family: "JetBrains Mono", "Segoe UI Symbol", monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 3px 10px;
+  border-radius: 6px;
+  text-transform: uppercase;
+}
+
+.approval-risk.risk-low {
+  color: #9ca3af;
+  background: rgba(156, 163, 175, 0.12);
+  border: 1px solid rgba(156, 163, 175, 0.3);
+}
+
+.approval-risk.risk-medium {
+  color: #facc15;
+  background: rgba(250, 204, 21, 0.1);
+  border: 1px solid rgba(250, 204, 21, 0.3);
+}
+
+.approval-risk.risk-high {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
+.approval-detail {
+  font-family: "JetBrains Mono", "Segoe UI Symbol", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--fg-secondary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+/* ===== DIFF GÖRÜNÜMÜ (onay kartı) ===== */
+.diff-line {
+  display: flex;
+  gap: 8px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.diff-num {
+  color: #4a4a4a;
+  font-size: 10px;
+  min-width: 34px;
+  text-align: right;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.diff-sign {
+  min-width: 12px;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.diff-add {
+  background: rgba(34, 197, 94, 0.15);
+  color: #86efac;
+}
+
+.diff-del {
+  background: rgba(239, 68, 68, 0.15);
+  color: #fca5a5;
+}
+
+.diff-context {
+  color: #9ca3af;
+}
+
+.diff-word-add {
+  background: rgba(34, 197, 94, 0.4);
+  border-radius: 2px;
+}
+
+.diff-word-del {
+  background: rgba(239, 68, 68, 0.4);
+  border-radius: 2px;
+}
+
+.diff-hunk {
+  color: #60a5fa;
+  font-size: 11px;
+  padding: 4px 4px;
+  user-select: none;
+}
+
+.diff-metrics {
+  font-size: 11px;
+  padding: 2px 4px 6px;
+}
+
+.diff-metrics .m-add {
+  color: #4ade80;
+}
+
+.diff-metrics .m-del {
+  color: #ef4444;
+}
+
+/* ===== DÜZENLEME (E kısayolu) ===== */
+.approval-edit {
+  padding: 4px 0;
+}
+
+.approval-edit-input {
+  width: 100%;
+  font-family: "JetBrains Mono", "Segoe UI Symbol", monospace;
+  font-size: 12px;
+  color: var(--fg-primary);
+  background: #0a0a0a;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 8px;
+  outline: none;
+  resize: vertical;
+}
+
+.approval-edit-input:focus {
+  border-color: #4a4a4a;
+}
+
+.approval-hint {
+  font-family: "JetBrains Mono", "Segoe UI Symbol", monospace;
+  font-size: 10px;
+  color: var(--fg-muted);
+  padding-top: 10px;
+  border-top: 1px solid #1f1f1f;
+}
+
+/* ===== ERROR OVERLAY  hata arka kap1s1 ===== */
+.err-overlay {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  max-width: 80%;
+  background: rgba(40, 10, 10, 0.95);
+  border: 1px solid #7f1d1d;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-family: "JetBrains Mono", "Segoe UI Symbol", "Cascadia Code", "Consolas", monospace;
+  font-size: 11px;
+  color: #fca5a5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  pointer-events: none;
+  animation: setup-fade 0.2s ease;
+}
+
+/* ===== XTERM — kutu yok, uygulamayla bütünleşik ===== */
+.xterm {
+  padding: 8px 0;
+  height: 100%;
+  outline: none;
+}
+
+.xterm:focus {
+  outline: none !important;
+}
+
+.xterm-viewport {
+  background: transparent !important;
+  border-radius: var(--radius-sm);
+  overflow-y: auto !important;
+}
+
+/* xterm.css default arka plan override — kutu görünmesin */
+.xterm-screen {
+  background: transparent !important;
+}
+
+.xterm .xterm-screen canvas {
+  border-radius: var(--radius-sm);
+}
