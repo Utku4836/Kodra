@@ -277,6 +277,8 @@ struct ToolCallMsg {
     id: String,
     name: String,
     arguments: serde_json::Value,
+    #[serde(default)]
+    thought_signature: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -284,6 +286,8 @@ struct ToolCallData {
     id: String,
     name: String,
     arguments: serde_json::Value,
+    #[serde(rename = "thoughtSignature")]
+    thought_signature: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -319,25 +323,39 @@ fn native_tools() -> serde_json::Value {
 /// Net hata mesajı — 429/404/503 özel açıklamalı
 fn map_ureq_err(e: ureq::Error) -> String {
     match e {
-        ureq::Error::Status(code, _) => match code {
-            429 => "Rate limit (429) — birkaç dakika bekleyip tekrar deneyin".to_string(),
-            503 => "Sunucu yükü (503) — biraz bekleyip tekrar deneyin".to_string(),
-            404 => "Bulunamadı (404) — model geçersiz olabilir, /model ile başka seçin".to_string(),
-            401 | 403 => "Yetki reddedildi — API key geçersiz olabilir".to_string(),
-            _ => format!("HTTP {}", code),
-        },
+        ureq::Error::Status(code, resp) => {
+            let detail: String = resp.into_string().unwrap_or_default().chars().take(300).collect();
+            match code {
+                429 => "Rate limit (429) — birkaç dakika bekleyip tekrar deneyin".to_string(),
+                503 => "Sunucu yükü (503) — biraz bekleyip tekrar deneyin".to_string(),
+                404 => "Bulunamadı (404) — model geçersiz olabilir, /model ile başka seçin".to_string(),
+                401 | 403 => "Yetki reddedildi — API key geçersiz olabilir".to_string(),
+                _ => {
+                    if detail.trim().is_empty() {
+                        format!("HTTP {}", code)
+                    } else {
+                        format!("HTTP {}: {}", code, detail.trim())
+                    }
+                }
+            }
+        }
         ureq::Error::Transport(t) => format!("Bağlantı hatası: {}", t),
     }
 }
 
-/// 429/503 (rate limit / sunucu yükü) durumunda 3sn bekleyip bir kez tekrar dener
+/// 429: retry YOK (limit dolu — tekrar denemek pencereyi çifte tüketir).
+/// 503 (sunucu yükü): 3sn bekleyip bir kez tekrar dener.
 fn send_with_retry<F>(build: F, body: &str) -> Result<ureq::Response, String>
 where
     F: Fn() -> ureq::Request,
 {
     let send = |body: &str| build().send_string(body);
     match send(body) {
-        Err(ureq::Error::Status(code, _)) if code == 429 || code == 503 => {
+        Err(ureq::Error::Status(429, _)) => {
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            Err("İstek limiti doldu (429) — lütfen pencere dolana kadar bekleyin".to_string())
+        }
+        Err(ureq::Error::Status(503, _)) => {
             std::thread::sleep(std::time::Duration::from_secs(3));
             send(body).map_err(map_ureq_err)
         }
@@ -345,7 +363,7 @@ where
     }
 }
 
-/// 429/503 durumunda 3sn bekleyip bir kez tekrar dener (GET istekleri)
+/// 429: retry YOK (çifte tüketim olmasın). 503: 3sn bekle, bir kez dene.
 fn call_with_retry<F>(build: F) -> Result<ureq::Response, String>
 where
     F: Fn() -> Result<ureq::Request, String>,
@@ -355,7 +373,11 @@ where
         req.call().map_err(map_ureq_err)
     };
     match call() {
-        Err(e) if e.starts_with("Rate limit") || e.starts_with("Sunucu yükü") => {
+        Err(e) if e.starts_with("Rate limit") => {
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            Err(e)
+        }
+        Err(e) if e.starts_with("Sunucu yükü") => {
             std::thread::sleep(std::time::Duration::from_secs(3));
             call()
         }
@@ -447,9 +469,14 @@ fn gemini_contents(messages: &[NativeMessage]) -> Vec<serde_json::Value> {
                 }
                 if let Some(tcs) = &m.tool_calls {
                     for tc in tcs {
-                        parts.push(serde_json::json!({
-                            "functionCall": {"name": tc.name, "args": tc.arguments}
-                        }));
+                        // Gemini 3.x: functionCall'a id ekle; thoughtSignature PART seviyesinde gönderilir
+                        let mut fc = serde_json::json!({
+                            "functionCall": {"name": tc.name, "args": tc.arguments, "id": tc.id}
+                        });
+                        if let Some(sig) = &tc.thought_signature {
+                            fc["thoughtSignature"] = serde_json::Value::String(sig.clone());
+                        }
+                        parts.push(fc);
                     }
                 }
                 out.push(serde_json::json!({"role": "model", "parts": parts}));
@@ -554,7 +581,9 @@ fn chat_blocking(config: &AppConfig, messages: &[NativeMessage]) -> Result<ChatR
             "max_tokens": 1024,
             "tools": tools,
             "tool_choice": "auto",
-            "messages": openai_messages(&non_system)
+            // OpenAI-uyumlular (NVIDIA, DeepSeek...): system dahil TÜM mesajlar
+            // system role'u messages içinde gönderilir — filtreleme YOK
+            "messages": openai_messages(messages)
         })
         .to_string(),
     };
@@ -596,6 +625,7 @@ fn chat_blocking(config: &AppConfig, messages: &[NativeMessage]) -> Result<ChatR
                                 id: block.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                                 name: block.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                                 arguments: block.get("input").cloned().unwrap_or(serde_json::json!({})),
+                                thought_signature: None,
                             });
                         }
                     }
@@ -609,10 +639,16 @@ fn chat_blocking(config: &AppConfig, messages: &[NativeMessage]) -> Result<ChatR
                         text.push_str(t);
                     }
                     if let Some(fc) = part.get("functionCall") {
+                        // D?KKAT: thoughtSignature functionCall'?n ???NDE de?il ?
+                        // part seviyesinde (functionCall ile ayn? hizada)
                         tool_calls.push(ToolCallData {
-                            id: format!("call-{}", tool_calls.len() + 1),
+                            id: fc.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                             name: fc.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                             arguments: fc.get("args").cloned().unwrap_or(serde_json::json!({})),
+                            thought_signature: part
+                                .get("thoughtSignature")
+                                .and_then(|v| v.as_str())
+                                .map(String::from),
                         });
                     }
                 }
@@ -633,6 +669,7 @@ fn chat_blocking(config: &AppConfig, messages: &[NativeMessage]) -> Result<ChatR
                             id: tc.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                             name,
                             arguments,
+                            thought_signature: None,
                         });
                     }
                 }

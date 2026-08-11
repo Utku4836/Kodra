@@ -1,14 +1,16 @@
-// ===== Terminal UI � main.js =====
-// macOS terminal esteti�xi � Tauri + xterm.js
-// NOT: window.__TAURI__ globali kullanılıyor (withGlobalTauri: true)
+// ===== GFM MARKDOWN MOTORU (markdown-it) =====
+import markdownit from "./vendor/markdown-it.esm.min.mjs";
 
-// ===== Error arka kapısı � hatalar ekranda görünsün =====
+// ===== Terminal UI — main.js =====
+// FAZ 7: DOM tabanlı kart mimarisi (xterm yerine)
+
+// ===== Error arka kapısı =====
 const errOverlay = document.getElementById("err-overlay");
 let errTimer = null;
 
 function showErrorOverlay(msg) {
   if (!errOverlay) return;
-  errOverlay.textContent = "⚠ " + msg;
+  errOverlay.textContent = "HATA: " + msg;
   errOverlay.style.display = "block";
   clearTimeout(errTimer);
   errTimer = setTimeout(() => {
@@ -23,21 +25,14 @@ window.addEventListener("unhandledrejection", (e) => {
   showErrorOverlay("Promise: " + (e.reason?.message || e.reason));
 });
 
-// ===== DevTools � Ctrl+Shift+D kısayolu + debug'da otomatik aç =====
+// ===== DevTools =====
 function openDevTools() {
   try {
     const wv = window.__TAURI__?.webview?.getCurrentWebview();
-    if (wv && wv.openDevTools) {
-      wv.openDevTools();
-      return;
-    }
+    if (wv && wv.openDevTools) { wv.openDevTools(); return; }
     const win = window.__TAURI__?.window?.getCurrentWindow();
-    if (win && win.openDevTools) {
-      win.openDevTools();
-    }
-  } catch (e) {
-    // sessiz
-  }
+    if (win && win.openDevTools) win.openDevTools();
+  } catch (e) {}
 }
 
 document.addEventListener("keydown", (ev) => {
@@ -47,186 +42,236 @@ document.addEventListener("keydown", (ev) => {
   }
 });
 
-// xterm.js — yerel dosyalar (CDN engelleniyor: Tracking Prevention)
-const xtermCss = document.createElement("link");
-xtermCss.rel = "stylesheet";
-xtermCss.href = "./vendor/xterm.css";
-document.head.appendChild(xtermCss);
-
-// Yerel ESM import
-const { Terminal } = await import("./vendor/xterm.mjs");
-const { FitAddon } = await import("./vendor/addon-fit.mjs");
-
-// ===== PROVIDER REGISTRY � güncel modeller =====
-const PROVIDER_REGISTRY = {
-  nvidia: {
-    id: "nvidia",
-    name: "NVIDIA NIM",
-    baseUrl: "https://integrate.api.nvidia.com/v1",
-    defaultModel: "nvidia/llama-3.3-nemotron-super-49b-v1",
-    requiresApiKey: true,
-  },
-  openai: {
-    id: "openai",
-    name: "OpenAI",
-    baseUrl: "https://api.openai.com/v1",
-    defaultModel: "gpt-4o",
-    requiresApiKey: true,
-  },
-  anthropic: {
-    id: "anthropic",
-    name: "Anthropic",
-    baseUrl: "https://api.anthropic.com/v1",
-    defaultModel: "claude-3-5-sonnet-20241022",
-    requiresApiKey: true,
-  },
-  gemini: {
-    id: "gemini",
-    name: "Google Gemini",
-    baseUrl: "https://generativelanguage.googleapis.com/v1beta",
-    defaultModel: "gemini-3.6-flash",
-    requiresApiKey: true,
-  },
-  groq: {
-    id: "groq",
-    name: "Groq",
-    baseUrl: "https://api.groq.com/openai/v1",
-    defaultModel: "llama-3.3-70b-versatile",
-    requiresApiKey: true,
-  },
-  deepseek: {
-    id: "deepseek",
-    name: "DeepSeek",
-    baseUrl: "https://api.deepseek.com/v1",
-    defaultModel: "deepseek-chat",
-    requiresApiKey: true,
-  },
-  together: {
-    id: "together",
-    name: "Together AI",
-    baseUrl: "https://api.together.xyz/v1",
-    defaultModel: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-    requiresApiKey: true,
-  },
-  fireworks: {
-    id: "fireworks",
-    name: "Fireworks AI",
-    baseUrl: "https://api.fireworks.ai/inference/v1",
-    defaultModel: "accounts/fireworks/models/llama-v3p3-70b-instruct",
-    requiresApiKey: true,
-  },
-  openrouter: {
-    id: "openrouter",
-    name: "OpenRouter",
-    baseUrl: "https://openrouter.ai/api/v1",
-    defaultModel: "auto",
-    requiresApiKey: true,
-  },
-  ollama: {
-    id: "ollama",
-    name: "Ollama (Local)",
-    baseUrl: "http://localhost:11434",
-    defaultModel: "llama3.3",
-    requiresApiKey: false,
-  },
-  custom: {
-    id: "custom",
-    name: "Custom Server",
-    baseUrl: "",
-    defaultModel: "",
-    requiresApiKey: true,
-  },
-};
-
-// ===== Tauri API (window.__TAURI__ globali) =====
+// ===== Tauri API =====
 const tauriCore = window.__TAURI__?.core;
 const tauriWindow = window.__TAURI__?.window;
 const invoke = tauriCore?.invoke;
 
-// Renk kodları (brief'ten)
-const C = {
-  primary: "\x1b[38;2;226;226;226m",   // #E2E2E2 ana metin
-  secondary: "\x1b[38;2;136;136;136m", // #888888 ikincil
-  green: "\x1b[38;2;74;222;128m",     // #4ADE80 success
-  muted: "\x1b[38;2;85;85;85m",       // #555555 sönük
-  red: "\x1b[38;2;239;68;68m",        // #EF4444 hata
-  yellow: "\x1b[38;2;250;204;21m",    // #FACC15 rozet
-  blue: "\x1b[38;2;96;165;250m",      // #60A5FA
-  think: "\x1b[3m\x1b[38;2;119;119;119m", // italik loş gri — düşünce
-  box: "\x1b[38;2;70;70;70m",         // #464646 kutu çizgileri
-  reset: "\x1b[0m",
-};
+// ===== DOM RENDERER — kart tabanlı akış =====
+const logEl = document.getElementById("log");
+const mainArea = document.querySelector(".main-area");
 
-const term = new Terminal({
-  fontFamily: '"JetBrains Mono", "Segoe UI Symbol", "Cascadia Code", "Consolas", monospace',
-  fontSize: 13,
-  fontWeight: "normal",
-  lineHeight: 1.6,
-  cursorBlink: false,
-  cursorStyle: "block",
-  allowTransparency: true,
-  disableStdin: true,
-  theme: {
-    background: "#0d0d0d",
-    foreground: "#e2e2e2",
-    cursor: "#e2e2e2",
-    cursorAccent: "#0d0d0d",
-    selectionBackground: "#333333",
-    black: "#0d0d0d",
-    red: "#ff5f56",
-    green: "#4ade80",
-    yellow: "#ffbd2e",
-    blue: "#60a5fa",
-    magenta: "#c084fc",
-    cyan: "#22d3ee",
-    white: "#e2e2e2",
-    brightBlack: "#666666",
-    brightRed: "#ff7b72",
-    brightGreen: "#86efac",
-    brightYellow: "#fde047",
-    brightBlue: "#93c5fd",
-    brightMagenta: "#d8b4fe",
-    brightCyan: "#67e8f9",
-    brightWhite: "#ffffff",
-  },
+function escapeHtml(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function autoScroll() {
+  if (!mainArea) return;
+  const atBottom = mainArea.scrollTop >= mainArea.scrollHeight - mainArea.clientHeight - 16;
+  if (atBottom) mainArea.scrollTop = mainArea.scrollHeight;
+}
+
+function logLine(text, cls) {
+  const div = document.createElement("div");
+  div.className = "log-line" + (cls ? " " + cls : "");
+  div.textContent = text;
+  logEl.appendChild(div);
+  autoScroll();
+  return div;
+}
+
+// Kullanıcı girdi bloğu — sol çizgili, belirgin
+function userBlock(text) {
+  const div = document.createElement("div");
+  div.className = "user-block";
+  div.textContent = text;
+  logEl.appendChild(div);
+  autoScroll();
+  return div;
+}
+
+// Nihai ajan yanıtı — markdown render + emoji temizle
+function assistantFinal(text) {
+  const div = document.createElement("div");
+  div.className = "assistant-final";
+  div.innerHTML = renderMd(stripEmojis(replacePaths(text)));
+  logEl.appendChild(div);
+  autoScroll();
+  return div;
+}
+
+// AGENT ACTION CARD — tam şeffaf cam, akıcı açılma, ASCII semboller
+function logItem(label, opts) {
+  opts = opts || {};
+  const item = document.createElement("div");
+  item.className = "log-item";
+
+  const head = document.createElement("div");
+  head.className = "log-item-head";
+
+  // Semboller: [~] düşünce, [>] araç, [OK] başarı, [ERR] hata
+  const status = document.createElement("span");
+  const st = opts.status || "busy";
+  status.className = "log-item-status st-" + st;
+  status.textContent = st === "ok" ? "[OK]" : st === "err" ? "[ERR]" : st === "run" ? "[>]" : "[~]";
+
+  const lbl = document.createElement("span");
+  lbl.className = "log-item-label" + (opts.dim ? " dim" : "") + (opts.err ? " err" : "");
+  lbl.textContent = label;
+
+  const time = document.createElement("span");
+  time.className = "log-item-time";
+  time.textContent = opts.time || "";
+
+  const arrow = document.createElement("span");
+  arrow.className = "log-item-arrow";
+  arrow.textContent = ">";
+
+  head.appendChild(status);
+  head.appendChild(lbl);
+  head.appendChild(time);
+  head.appendChild(arrow);
+
+  // Akıcı açılma için grid sarmalayıcı
+  const body = document.createElement("div");
+  body.className = "log-item-body";
+  const inner = document.createElement("div");
+  inner.className = "log-item-body-inner";
+  const content = document.createElement("div");
+  content.className = "log-item-body-content";
+  if (opts.bodyHtml) content.innerHTML = opts.bodyHtml;
+  else if (opts.bodyText !== undefined) content.textContent = opts.bodyText;
+  inner.appendChild(content);
+  body.appendChild(inner);
+
+  item.appendChild(head);
+  item.appendChild(body);
+
+  if (!opts.noToggle) {
+    head.addEventListener("click", () => {
+      const isOpen = item.classList.toggle("open");
+      arrow.textContent = isOpen ? "v" : ">";
+    });
+  } else {
+    arrow.style.display = "none";
+    body.style.display = "none";
+  }
+
+  logEl.appendChild(item);
+  autoScroll();
+  return {
+    item,
+    body: content,
+    lbl,
+    setTime: (t) => { time.textContent = t; },
+    setStatus: (s) => {
+      if (s === "ok" || s === "err") {
+        status.style.display = "none"; // rozet yok ? sade ve temiz
+      } else {
+        status.style.display = "";
+        status.className = "log-item-status st-" + s;
+        status.textContent = s === "run" ? "[>]" : "[~]";
+      }
+    },
+  };
+}
+
+// Düşünce kartı kaldırıldı — reasoning payload'ı gelmiyor;
+// boş düşünce kartları basılmaz (şartlı düşünce), ara açıklamalar dışarıda akar.
+
+// ===== YOL KISALTMA — home → ~ =====
+let HOME_DIR = "";
+
+function shortPath(p) {
+  const s = String(p || "");
+  if (HOME_DIR && s.toLowerCase().startsWith(HOME_DIR.toLowerCase())) {
+    return "~" + s.slice(HOME_DIR.length);
+  }
+  return s;
+}
+
+// ===== MARKDOWN + EMOJİ TEMİZLİĞİ =====
+
+// Yol kısaltma — nihai yanıttaki tam Windows yolları ~ ile değiştirilir
+function replacePaths(text) {
+  let s = String(text);
+  if (HOME_DIR) {
+    s = s.split(HOME_DIR).join("~");
+  }
+  return s;
+}
+
+function stripEmojis(text) {
+  return String(text).replace(
+    /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}\u{2300}-\u{23FF}\u{2B50}\u{2728}]/gu,
+    ""
+  );
+}
+
+function renderMd(text) {
+  let s = escapeHtml(text);
+  s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/(^|\n)\*([^*\n]+)\*/g, "$1<em>$2</em>");
+  return s;
+}
+
+// Hata kutusu — şeffaf kırmızı cam callout
+function renderAlert(msg) {
+  const div = document.createElement("div");
+  div.className = "alert-box";
+  div.textContent = msg;
+  logEl.appendChild(div);
+  autoScroll();
+  return div;
+}
+
+// Mouse spotlight — kartların üzerinde imleç takibi
+document.addEventListener("mousemove", (e) => {
+  const cards = document.querySelectorAll(".log-item");
+  for (const card of cards) {
+    const r = card.getBoundingClientRect();
+    if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) {
+      card.style.setProperty("--mx", e.clientX - r.left + "px");
+      card.style.setProperty("--my", e.clientY - r.top + "px");
+    }
+  }
 });
 
-const fitAddon = new FitAddon();
-term.loadAddon(fitAddon);
+// typeText — DOM'da akıcı yazma + satır animasyonu + markdown/emoji temizliği
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
-const terminalEl = document.getElementById("terminal");
-term.open(terminalEl);
-
-// Fit — layout hazır olunca birkaç kez dene (ilk ölçüm 0 olabilir)
-function fitTerminal() {
-  try {
-    fitAddon.fit();
-  } catch (e) {
-    // sessiz
+async function typeText(text, cls) {
+  const lines = String(text).split("\n");
+  for (const line of lines) {
+    const el = document.createElement("div");
+    el.className = "log-line type-anim" + (cls ? " " + cls : "");
+    logEl.appendChild(el);
+    const chunks = line.split(/(\s+)/);
+    for (const chunk of chunks) {
+      if (!chunk) continue;
+      el.textContent += chunk;
+      autoScroll();
+      await sleep(8);
+    }
+    // Yazma bitti — markdown render + emoji temizle
+    el.innerHTML = renderMd(stripEmojis(replacePaths(el.textContent)));
+    autoScroll();
   }
-}
-requestAnimationFrame(fitTerminal);
-setTimeout(fitTerminal, 150);
-setTimeout(fitTerminal, 600);
-
-// Container boyutu değişirse yeniden fit
-if (typeof ResizeObserver !== "undefined") {
-  const ro = new ResizeObserver(() => fitTerminal());
-  ro.observe(terminalEl);
+  autoScroll();
 }
 
-// ===== State =====
+// ===== PROVIDER REGISTRY =====
+const PROVIDER_REGISTRY = {
+  nvidia: { id: "nvidia", name: "NVIDIA NIM", baseUrl: "https://integrate.api.nvidia.com/v1", defaultModel: "nvidia/llama-3.3-nemotron-super-49b-v1", requiresApiKey: true },
+  openai: { id: "openai", name: "OpenAI", baseUrl: "https://api.openai.com/v1", defaultModel: "gpt-4o", requiresApiKey: true },
+  anthropic: { id: "anthropic", name: "Anthropic", baseUrl: "https://api.anthropic.com/v1", defaultModel: "claude-3-5-sonnet-20241022", requiresApiKey: true },
+  gemini: { id: "gemini", name: "Google Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta", defaultModel: "gemini-3.6-flash", requiresApiKey: true },
+  groq: { id: "groq", name: "Groq", baseUrl: "https://api.groq.com/openai/v1", defaultModel: "llama-3.3-70b-versatile", requiresApiKey: true },
+  deepseek: { id: "deepseek", name: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", defaultModel: "deepseek-chat", requiresApiKey: true },
+  together: { id: "together", name: "Together AI", baseUrl: "https://api.together.xyz/v1", defaultModel: "meta-llama/Llama-3.3-70B-Instruct-Turbo", requiresApiKey: true },
+  fireworks: { id: "fireworks", name: "Fireworks AI", baseUrl: "https://api.fireworks.ai/inference/v1", defaultModel: "accounts/fireworks/models/llama-v3p3-70b-instruct", requiresApiKey: true },
+  openrouter: { id: "openrouter", name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", defaultModel: "auto", requiresApiKey: true },
+  ollama: { id: "ollama", name: "Ollama (Local)", baseUrl: "http://localhost:11434", defaultModel: "llama3.3", requiresApiKey: false },
+  custom: { id: "custom", name: "Custom Server", baseUrl: "", defaultModel: "", requiresApiKey: true },
+};
+
+// ===== STATE =====
 let isInitialized = false;
 let providerNameCache = null;
-let configCache = null; // config'in hafızadaki kopyası � get_config hata verse bile akı�x devam eder
+let configCache = null;
 
-// Config cache  localStorage'a kalıcı yaz (her açılı�xta API sormamak için)
 function persistConfigCache() {
-  try {
-    localStorage.setItem("appConfig", JSON.stringify(configCache));
-  } catch (e) {
-    // sessiz
-  }
+  try { localStorage.setItem("appConfig", JSON.stringify(configCache)); } catch (e) {}
 }
 
 function loadConfigCache() {
@@ -234,20 +279,16 @@ function loadConfigCache() {
     const raw = localStorage.getItem("appConfig");
     if (raw) {
       configCache = JSON.parse(raw);
-      // Mode garantisi — eski cache'lerde yoksa smart
       if (configCache && !configCache.mode) configCache.mode = "smart";
     }
-  } catch (e) {
-    // sessiz
-  }
+  } catch (e) {}
 }
 
-// ===== API Modal � API key giri�xi =====
+// ===== API MODAL =====
 const apiModal = document.getElementById("api-modal");
 const apiKeyInput = document.getElementById("api-key-input");
 const apiKeySubtext = document.getElementById("api-key-subtext");
 const apiKeyError = document.getElementById("api-key-error");
-
 let apiModalProvider = null;
 
 function openApiModal(p) {
@@ -256,9 +297,7 @@ function openApiModal(p) {
   apiKeyInput.value = "";
   apiKeyError.textContent = "";
   apiKeyInput.classList.remove("error");
-
   if (!p.requiresApiKey) {
-    // Ollama gibi � key gerekmez, direkt ba�xlan
     apiKeySubtext.textContent = "Bağlanılıyor...";
     connectProvider(p, "");
   } else {
@@ -276,20 +315,11 @@ function closeApiModal() {
 async function connectProvider(provider, apiKey) {
   try {
     const baseUrl = provider.baseUrl;
-    await invoke("validate_api_key", {
-      provider: provider.id,
-      apiKey,
-      baseUrl,
-    });
+    countApiCall(); // validate ? API limitine dahil
+    await invoke("validate_api_key", { provider: provider.id, apiKey, baseUrl });
 
-    // Mevcut config'i koru — yeni provider'ı LİSTEYE EKLE (çoklu bağlantı)
     const prev = configCache || (await invoke("get_config")) || {};
-    const newProvider = {
-      id: provider.id,
-      apiKey,
-      baseUrl,
-      model: provider.defaultModel,
-    };
+    const newProvider = { id: provider.id, apiKey, baseUrl, model: provider.defaultModel };
     const providers = Array.isArray(prev.providers) && prev.providers.length > 0
       ? prev.providers.filter((p) => (p.id || p.provider) !== provider.id)
       : (prev.apiKey ? [{ id: prev.provider, apiKey: prev.apiKey, baseUrl: prev.baseUrl, model: prev.model }] : []);
@@ -304,19 +334,14 @@ async function connectProvider(provider, apiKey) {
       allowList: prev.allowList || [],
       providers,
     };
-
-    // Başarılı — config'e kaydet
     await invoke("save_config", { config: configCache });
-
     isInitialized = true;
-    modelCache = null; // yeni provider — cache temiz
+    modelCache = null;
     providerNameCache = provider.name;
     persistConfigCache();
     closeApiModal();
-    // Model seçimi — provider bağlandıktan sonra model menüsü açılır
     openModelMenu();
   } catch (e) {
-    // Başarısız — kırmızı border + uyarı
     apiKeyInput.classList.add("error");
     apiKeyError.textContent = "Geçersiz API Key — " + e;
     apiKeySubtext.textContent = "";
@@ -324,10 +349,8 @@ async function connectProvider(provider, apiKey) {
   }
 }
 
-// API modal klavye � Enter do�xrula, Esc kapat
 document.addEventListener("keydown", (ev) => {
   if (apiModal.style.display !== "flex") return;
-
   if (ev.key === "Enter") {
     ev.preventDefault();
     if (!apiModalProvider) return;
@@ -346,91 +369,182 @@ document.addEventListener("keydown", (ev) => {
   }
 });
 
-// ===== Dinamik çalı�xma dizini (pwd) =====
-let currentCwd = "~";
-
-async function updateCwd() {
-  const pathEl = document.getElementById("path");
-  if (!pathEl) return;
-  if (!invoke) {
-    pathEl.textContent = "~";
-    return;
-  }
-  try {
-    const cwd = await invoke("pwd");
-    const home = await invoke("home").catch(() => "");
-    currentCwd = shortenPath(cwd, home);
-    pathEl.textContent = currentCwd;
-  } catch (e) {
-    pathEl.textContent = "~";
-  }
-}
-
-function shortenPath(path, home) {
-  if (home && path.startsWith(home)) {
-    return "~" + path.slice(home.length).replace(/\\/g, "/");
-  }
-  return path.replace(/\\/g, "/");
-}
-
-updateCwd();
-
-// ===== Window controls (macOS trafik lambaları) =====
+// ===== WINDOW CONTROLS =====
 const btnClose = document.getElementById("btn-close");
 const btnMin = document.getElementById("btn-min");
 const btnMax = document.getElementById("btn-max");
 
-if (btnClose) {
-  btnClose.addEventListener("click", async () => {
-    try {
-      if (tauriWindow) {
-        const appWindow = tauriWindow.getCurrentWindow();
-        await appWindow.close();
-      }
-    } catch (e) {
-      console.error("close error:", e);
-    }
-  });
+if (btnClose) btnClose.addEventListener("click", async () => { try { await tauriWindow?.getCurrentWindow()?.close(); } catch (e) {} });
+if (btnMin) btnMin.addEventListener("click", async () => { try { await tauriWindow?.getCurrentWindow()?.minimize(); } catch (e) {} });
+if (btnMax) btnMax.addEventListener("click", async () => { try { await tauriWindow?.getCurrentWindow()?.toggleMaximize(); } catch (e) {} });
+
+// ===== HEADER — model chip + path + ctx çizgisi =====
+const modelChip = document.getElementById("model-chip");
+const pathEl = document.getElementById("path");
+const ctxFill = document.getElementById("ctx-fill");
+const apiCountEl = document.getElementById("api-count");
+
+// API çağrı sayacı — oturumdaki LLM isteği sayısı
+let apiCallCount = 0;
+function countApiCall() {
+  apiCallCount++;
+  if (apiCountEl) apiCountEl.textContent = "API " + apiCallCount;
 }
 
-if (btnMin) {
-  btnMin.addEventListener("click", async () => {
-    try {
-      if (tauriWindow) {
-        const appWindow = tauriWindow.getCurrentWindow();
-        await appWindow.minimize();
-      }
-    } catch (e) {
-      console.error("minimize error:", e);
-    }
-  });
+function shortModelName(model) {
+  const s = String(model || "");
+  return s.split("/").pop().slice(0, 24);
 }
 
-if (btnMax) {
-  btnMax.addEventListener("click", async () => {
-    try {
-      if (tauriWindow) {
-        const appWindow = tauriWindow.getCurrentWindow();
-        await appWindow.toggleMaximize();
-      }
-    } catch (e) {
-      console.error("maximize error:", e);
-    }
-  });
+function updateModelChip(model) {
+  if (modelChip) {
+    modelChip.textContent = shortModelName(model);
+    modelChip.title = model || "";
+  }
 }
 
-// ===== Komut input � alt alan =====
-const cmdInput = document.getElementById("cmd-input");
-let cmdHistory = [];
-let historyIdx = -1;
+if (modelChip) {
+  modelChip.addEventListener("click", () => openModelMenu());
+}
 
-// ===== Suggest panel � komut/model/provider önerileri =====
+function updatePath(cwd) {
+  if (!pathEl) return;
+  const parts = String(cwd || "").split(/[\\/]/).filter(Boolean);
+  const last = parts.length ? parts[parts.length - 1] : (cwd || "~");
+  pathEl.textContent = "~" + (parts.length > 1 ? "/" + last : "");
+  pathEl.title = cwd || "";
+}
+
+// ===== CONTEXT MANAGER =====
+function contextLimitOf(config) {
+  const v = config && config.contextLimit ? Number(config.contextLimit) : 0;
+  return v >= 8000 && v <= 4000000 ? v : 131072;
+}
+
+function contextRatioOf(config) {
+  const r = config && config.contextRatio !== undefined ? Number(config.contextRatio) : NaN;
+  return !isNaN(r) && r > 0 && r <= 1 ? r : 0.8;
+}
+
+function compactThresholdFor(config) {
+  return Math.floor(contextLimitOf(config) * contextRatioOf(config));
+}
+
+function estimateTokens(history) {
+  let total = 0;
+  for (const m of history) {
+    total += Math.ceil(String(m.content || "").length / 4);
+  }
+  return total;
+}
+
+function fmtK(n) {
+  return n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n);
+}
+
+// Context çizgisi + tooltip
+function updateCtxGauge(history, reply) {
+  if (!ctxFill) return;
+  const config = configCache;
+  const limit = contextLimitOf(config);
+  const ratio = contextRatioOf(config);
+  const inTok = estimateTokens(history);
+  const outTok = reply ? Math.ceil(String(reply.text || "").length / 4) : 0;
+  const total = inTok + outTok;
+  const pct = Math.min(100, (total / limit) * 100);
+
+  ctxFill.style.width = pct + "%";
+  ctxFill.className = "ctx-fill" + (pct > 90 ? " high" : pct > 70 ? " mid" : "");
+
+  const line = document.querySelector(".ctx-line");
+  if (line) {
+    line.title = "Context: " + fmtK(total) + " / " + fmtK(limit) + " (" + pct.toFixed(1) + "%) — eşik %" + Math.round(ratio * 100);
+  }
+}
+
+function compactHistory(history) {
+  if (!history || history.length <= 2) return history;
+  const compacted = [history[0]];
+  if (history[1]) compacted.push(history[1]);
+  for (let i = 2; i < history.length; i++) {
+    const m = history[i];
+    if (m.role === "assistant") {
+      compacted.push({ role: "assistant", content: String(m.content || "").slice(0, 500), toolCalls: m.toolCalls });
+    } else if (m.role === "tool") {
+      compacted.push({ role: "tool", toolCallId: m.toolCallId, content: String(m.content || "").slice(0, 200) });
+    } else {
+      compacted.push(m);
+    }
+  }
+  return compacted;
+}
+
+// ===== SYSTEM PROMPT =====
+function buildSystemPrompt(config, homeDir) {
+  return (
+    "You are a terminal assistant operating on the user's computer. You call tools to read, write, search files, run commands, fetch web pages, manage processes, and delegate subtasks. Execute the user's request end-to-end like a senior developer.\n\n" +
+    "## Environment\n" +
+    "- OS: Windows — shell commands run through cmd; bash/Linux commands (ls, uname, pwd, $HOME, ~, 2>/dev/null) do NOT work.\n" +
+    "- Home directory: " + (homeDir || "(resolve at runtime)") +
+    "\n- Desktop is usually <home>\\Desktop, but may be redirected (e.g. OneDrive: <home>\\OneDrive\\Desktop). Discover the real location with list_dir — never guess.\n" +
+    "- Resolve all paths dynamically. If a path is unknown, verify it with list_dir before assuming.\n" +
+    "- NEVER probe for paths with shell commands (whoami, echo $HOME, powershell GetFolderPath, cd, dir) — use list_dir/read_file instead.\n\n" +
+    "## Identity\n" +
+    "- Your model identity is: " + config.model + ". State it verbatim when asked.\n" +
+    "- You are an agent, not a chatbot: complete tasks with tools, do not just discuss them.\n\n" +
+    "## Task Execution (To-Do Engine)\n" +
+    "- Break complex requests into logical steps and execute them in order.\n" +
+    "- Work on ONE step at a time. Do not attempt everything in a single tool call.\n" +
+    "- Keep the user informed briefly: what you are doing and why (1 short line per step).\n" +
+    "- Track progress mentally across turns — tool results are the ground truth of what has been done.\n" +
+    "- Short follow-ups (\"continue\", \"devam et\", \"fix it\", \"hatayı düzelt\") refer to the CURRENT task: resume from the last tool result, never restart from zero.\n\n" +
+    "## Auto-Plan Mode\n" +
+    "- Complex/multi-step tasks (3+ actions, file modifications, investigations): BEFORE acting, present a short numbered plan (2-5 steps) to the user, then execute it step by step.\n" +
+    "- Simple tasks (single read, quick answer): act immediately, no plan needed.\n" +
+    "- After completing all plan steps, close with a concise summary of what was done.\n\n" +
+    "## Mid-Flight Steering\n" +
+    "- If the user interrupts (\"dur\", \"stop\", \"bekle\", \"wait\", \"change\", \"değiştir\", new instructions): stop the current action chain immediately and follow the new direction. Do not finish the old plan first.\n" +
+    "- Preserve context from previous steps — the user expects continuity, not a fresh start.\n\n" +
+    "## Tool Usage Discipline\n" +
+    "- Choose the most specific tool for the job: read_file for content, list_dir for directory structure, search_code for locating symbols, web_fetch for web content, execute_command for shell operations.\n" +
+    "- NEVER use shell commands (curl, Invoke-WebRequest, Out-File, dir, type, ls) for file or web operations — always use the built-in tools.\n" +
+    "- Do not chain speculative attempts (trying ls, then echo, then find). Pick ONE correct approach and execute it.\n" +
+    "- Pass complete, correct parameters. Verify paths before destructive or write operations.\n" +
+    "- Do not call a tool when you already have the answer from previous results.\n" +
+    "- If a tool returns an error, correct your parameters and retry — retrying the same call is allowed and expected.\n\n" +
+    "## Error Handling & Self-Correction\n" +
+    "- Tool errors are normal: analyze the message (HTTP status, os error, missing path), fix the cause, retry with corrected parameters or a different tool.\n" +
+    "- NEVER abandon the task or send a greeting (\"Hello! How can I help?\") after an error.\n" +
+    "- If the same approach fails twice, change strategy entirely (different tool, different path, different command).\n\n" +
+    "## Verification & Quality\n" +
+    "- After write/edit/delete operations, verify the result (read_file or list_dir) before reporting success.\n" +
+    "- Do not report success based on assumption — confirm with tool output.\n" +
+    "- Finish with a short summary: what was done, what changed, and any follow-up needed.\n\n" +
+    "## Memory\n" +
+    "- Use manage_memory to persist important project facts (decisions, structures, learned gotchas) for future sessions.\n" +
+    "- Read memory before starting a task that seems related to previous work.\n" +
+    "- Memory keys should be short and semantic.\n\n" +
+    "## Sub-Agent Delegation\n" +
+    "- Use spawn_sub_agent for independent, well-scoped subtasks that do not need your current context (isolated research, long computations, separate concerns).\n" +
+    "- Keep the main task and context for yourself; delegate only what can stand alone.\n" +
+    "- Incorporate the sub-agent report into your final answer.\n\n" +
+    "## Safety & Guardrails\n" +
+    "- NEVER propose or run destructive commands (rm -rf, format, shutdown, diskpart, mkfs, Remove-Item -Recurse).\n" +
+    "- Be careful around sensitive paths (.env, .git, node_modules, system folders) — ask or avoid modifying them.\n" +
+    "- Respect permission prompts: if approval is required, wait; do not attempt to bypass it.\n\n" +
+    "## Communication\n" +
+    "- Respond in the same language the user writes in.\n" +
+    "- Be concise: short sentences, no filler. You may use markdown and emojis when they help readability.\n" +
+    "- Plans and summaries: keep them clean and readable."
+  );
+}
+
+// ===== SUGGEST PANEL =====
 const suggestPanel = document.getElementById("suggest-panel");
 const COMMANDS = ["/model", "/provider", "/permissions", "/context", "/undo", "/clear"];
-let suggestMode = null; // "commands" | "models" | "providers"
+let suggestMode = null;
 let suggestItems = [];
 let suggestIndex = 0;
-let modelCache = null;
 
 function showSuggest(items, mode) {
   suggestMode = mode;
@@ -440,18 +554,7 @@ function showSuggest(items, mode) {
   items.forEach((it, i) => {
     const el = document.createElement("div");
     el.className = "suggest-item" + (i === 0 ? " active" : "");
-    if (mode === "models") {
-      el.textContent = it.id;
-    } else if (mode === "providers") {
-      el.textContent = it.name;
-      const type = document.createElement("span");
-      type.className = "suggest-type";
-      type.textContent = it.requiresApiKey ? "key" : "local";
-      el.appendChild(type);
-    } else {
-      el.textContent = it;
-    }
-    // Sadece klavye � mouse click devre dı�xı
+    el.textContent = typeof it === "string" ? it : (it.name || it.id);
     suggestPanel.appendChild(el);
   });
   suggestPanel.style.display = "block";
@@ -460,11 +563,6 @@ function showSuggest(items, mode) {
 function updateActiveItem() {
   const items = suggestPanel.querySelectorAll(".suggest-item");
   items.forEach((el, i) => el.classList.toggle("active", i === suggestIndex));
-  // Aktif item'ı görünür tut � scroll panel içinde takip etsin
-  const activeEl = items[suggestIndex];
-  if (activeEl) {
-    activeEl.scrollIntoView({ block: "nearest" });
-  }
 }
 
 function hideSuggest() {
@@ -475,29 +573,21 @@ function hideSuggest() {
   suggestMode = null;
 }
 
-// ===== MODAL � model/provider seçim penceresi =====
+// ===== MODAL (model/provider/mod) =====
 const modal = document.getElementById("modal");
 const modalSearchInput = document.getElementById("modal-search-input");
 const modalList = document.getElementById("modal-list");
-const modelLabel = document.getElementById("model-label");
-
-let modalMode = null; // "models" | "providers"
-let modalAllItems = []; // tüm item'lar {id} veya {name, ...}
-let modalItems = []; // render edilmi�x (flat) item referansları
+let modalMode = null;
+let modalAllItems = [];
+let modalItems = [];
 let modalIndex = 0;
+let modelCache = null;
 
 function openModal(mode) {
   modalMode = mode;
   modal.style.display = "flex";
   modalSearchInput.value = "";
-  if (mode === "models") {
-    renderModalList(modalAllItems);
-  } else if (mode === "providers") {
-    renderModalList(Object.values(PROVIDER_REGISTRY).map((p) => ({ id: p.id, name: p.name, provider: p })));
-  } else if (mode === "mode") {
-    // Mod seçim menüsü — direkt render (boş görünme bug'ı düzeltildi)
-    renderModalList(modalAllItems);
-  }
+  renderModalList(modalAllItems);
   modalSearchInput.focus();
   updateModalActive();
 }
@@ -516,7 +606,6 @@ function renderModalList(items) {
   modalIndex = 0;
 
   if (modalMode === "models") {
-    // Her bağlı provider için ayrı kategori başlığı
     const groups = {};
     items.forEach((it) => {
       const key = it.providerName || "Modeller";
@@ -537,7 +626,6 @@ function renderModalList(items) {
       });
     });
   } else if (modalMode === "mode") {
-    // Mod seçimi — mevcut mod i�xaretli + odak
     const header = document.createElement("div");
     header.className = "modal-category";
     header.textContent = "Erişim Modu";
@@ -552,11 +640,8 @@ function renderModalList(items) {
       modalList.appendChild(el);
       modalItems.push({ el, item: it });
     });
-    if (configCache) {
-      modalIndex = connectedIdx;
-    }
+    if (configCache) modalIndex = connectedIdx;
   } else {
-    // Providerlar — tek liste; bağlı provider'lar ✓ işaretli + aktif olan odakta
     let connectedIdx = 0;
     const linked = (configCache && configCache.providers && configCache.providers.length > 0)
       ? configCache.providers.map((p) => p.id || p.provider)
@@ -571,31 +656,19 @@ function renderModalList(items) {
       modalList.appendChild(el);
       modalItems.push({ el, item: it });
     });
-    if (configCache) {
-      modalIndex = connectedIdx;
-    }
+    if (configCache) modalIndex = connectedIdx;
   }
-}
-
-function currentProviderName() {
-  if (providerNameCache) return providerNameCache;
-  const first = Object.values(PROVIDER_REGISTRY)[0];
-  return first ? first.name : "Provider";
 }
 
 function updateModalActive() {
   modalItems.forEach((row, i) => row.el.classList.toggle("active", i === modalIndex));
   const active = modalItems[modalIndex];
   if (active) {
-    // Manuel scroll � akıcı, lag yok
     const list = modalList;
     const top = active.el.offsetTop - list.offsetTop;
     const bottom = top + active.el.offsetHeight;
-    if (top < list.scrollTop) {
-      list.scrollTop = top;
-    } else if (bottom > list.scrollTop + list.clientHeight) {
-      list.scrollTop = bottom - list.clientHeight;
-    }
+    if (top < list.scrollTop) list.scrollTop = top;
+    else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight;
   }
 }
 
@@ -607,9 +680,7 @@ function filterModal() {
     return;
   }
   if (modalMode === "models") {
-    const filtered = modalAllItems.filter(
-      (it) => it.id.toLowerCase().includes(q) || (it.providerName || "").toLowerCase().includes(q)
-    );
+    const filtered = modalAllItems.filter((it) => it.id.toLowerCase().includes(q) || (it.providerName || "").toLowerCase().includes(q));
     renderModalList(filtered);
   } else if (modalMode === "mode") {
     const filtered = modalAllItems.filter((it) => it.name.toLowerCase().includes(q));
@@ -628,60 +699,42 @@ async function selectModalItem() {
   if (!row) return;
 
   if (modalMode === "models") {
-    // Direkt seç — test yok
     await selectModel(row.item.providerId, row.item.id);
     closeModal();
   } else if (modalMode === "mode") {
-    // Mod seçildi — kaydet
     const m = row.item.id;
     closeModal();
     if (!configCache) configCache = {};
     configCache.mode = m;
     persistConfigCache();
-    try {
-      await invoke("save_config", { config: configCache });
-    } catch (e) {
-      // sessiz
-    }
-    term.writeln(C.green + "✓ mod: " + C.reset + C.primary + m + C.reset);
+    try { await invoke("save_config", { config: configCache }); } catch (e) {}
+    logLine("mod: " + m, "ok");
   } else if (modalMode === "providers") {
     const p = row.item.provider;
     closeModal();
-    // Zaten bağlıysa key sorma — direkt model menüsü (çoklu provider kontrolü)
     const linked = (configCache && configCache.providers && configCache.providers.length > 0)
       ? configCache.providers
       : (configCache && configCache.apiKey ? [configCache] : []);
     const existing = linked.find((lp) => (lp.id || lp.provider) === p.id);
     if (existing && existing.apiKey) {
-      // Bağlı — aktif yap, key sorma
       configCache.provider = p.id;
       configCache.apiKey = existing.apiKey;
       configCache.baseUrl = existing.baseUrl;
       configCache.model = existing.model;
       providerNameCache = p.name;
       persistConfigCache();
-      try {
-        await invoke("save_config", { config: configCache });
-      } catch (e) {
-        // sessiz
-      }
+      try { await invoke("save_config", { config: configCache }); } catch (e) {}
       openModelMenu();
       return;
     }
-    // Yeni/bağlanmamış provider → API key girişi
     openApiModal(p);
   }
 }
 
-// Modal klavye yönetimi
 document.addEventListener("keydown", (ev) => {
   if (!modalMode) return;
-
-  // cmdInput'tan gelen event — modalı YENİ açan Enter'ın kalıntısı olabilir.
-  // Bu durumda modal handler işlemesin (aksi halde menü anında ilk item'ı seçip kapanır).
   if (ev.target === cmdInput) return;
 
-  // Arama input'una harf/backspace gitmesin diye — input focus'tayken kendi işler
   if (ev.target !== modalSearchInput) {
     if (ev.key.length === 1 && !ev.ctrlKey && !ev.metaKey) {
       ev.preventDefault();
@@ -718,30 +771,25 @@ document.addEventListener("keydown", (ev) => {
   }
 });
 
-// Arama input � canlı filtre
 if (modalSearchInput) {
   modalSearchInput.addEventListener("keyup", (ev) => {
-    if (ev.key === "ArrowDown" || ev.key === "ArrowUp" || ev.key === "Enter" || ev.key === "Escape") {
-      return;
-    }
+    if (ev.key === "ArrowDown" || ev.key === "ArrowUp" || ev.key === "Enter" || ev.key === "Escape") return;
     filterModal();
   });
 }
 
-// Seçili modeli sa�x üstte göster
-function updateModelLabel(model) {
-  if (modelLabel) {
-    modelLabel.textContent = model || "";
-  }
-}
-
-// Tüm bağlı provider'ların modellerini topla
+// ===== MODEL YÖNETİMİ =====
 async function getModels() {
   if (modelCache) return modelCache;
-  const config = configCache || (await invoke("get_config"));
+  let config;
+  try {
+    config = configCache || (await invoke("get_config"));
+  } catch (e) {
+    logLine("config okunamadı: " + e, "err");
+    return [];
+  }
   if (!config) return [];
 
-  // Bağlı provider listesi — providers yoksa ana provider
   const providers = config.providers && config.providers.length > 0 ? config.providers : [config];
   const all = [];
   for (const p of providers) {
@@ -754,16 +802,19 @@ async function getModels() {
         mode: config.mode || "smart",
         allowList: config.allowList || [],
       };
+      countApiCall(); // list_models — API limitine dahil
       const models = await invoke("list_models", { config: pConfig });
       const pName = (PROVIDER_REGISTRY[p.id || p.provider] || {}).name || p.id || "Provider";
       for (const id of models) {
         all.push({ providerId: p.id || p.provider, providerName: pName, id });
       }
     } catch (e) {
-      // o provider başarısız — atla
+      // Sessiz değil — hata görünür olsun
+      logLine("model listesi alınamadı (" + (p.id || p.provider) + "): " + e, "err");
     }
   }
-  modelCache = all;
+  // Boş sonucu cache'leme — sonraki denemede tekrar çekilsin
+  if (all.length > 0) modelCache = all;
   return all;
 }
 
@@ -771,29 +822,175 @@ async function selectModel(providerId, id) {
   const config = configCache || (await invoke("get_config"));
   if (!config) return;
 
-  // Aktif provider'ı seçilen modelin provider'ı yap
+  // KRİTİK: provider değişiyorsa apiKey/baseUrl'i o provider'ın kaydından al
+  // (aksi halde eski provider'ın key'i ile yeni provider'a istek gider → 405/401)
+  const providerEntry = (config.providers || []).find((p) => (p.id || p.provider) === providerId);
+  if (providerEntry && providerEntry.apiKey) {
+    config.apiKey = providerEntry.apiKey;
+    config.baseUrl = providerEntry.baseUrl;
+  }
+
   config.provider = providerId;
   config.model = id;
-
-  // Linked provider listesini güncelle
   if (!config.providers || config.providers.length === 0) {
-    config.providers = [
-      { id: config.provider, apiKey: config.apiKey, baseUrl: config.baseUrl, model: config.model },
-    ];
+    config.providers = [{ id: config.provider, apiKey: config.apiKey, baseUrl: config.baseUrl, model: config.model }];
   }
   const target = config.providers.find((p) => (p.id || p.provider) === providerId);
-  if (target) {
-    target.model = id;
-  }
-
-  // Kaydet
+  if (target) target.model = id;
   await invoke("save_config", { config });
   configCache = config;
   persistConfigCache();
-  updateModelLabel(id);
+  updateModelChip(id);
   const p = PROVIDER_REGISTRY[providerId];
   if (p) providerNameCache = p.name;
   cmdInput.focus();
+}
+
+async function openModelMenu() {
+  hideSuggest();
+  let models = [];
+  try {
+    models = await getModels();
+  } catch (e) {
+    logLine("model listesi alınamadı: " + e, "err");
+  }
+  if (models.length === 0) {
+    // Fallback: ağ/limit hatası — tüm bağlı provider'ların mevcut modellerini göster
+    try {
+      const cfg = configCache || (await invoke("get_config"));
+      if (cfg) {
+        const providerList = cfg.providers && cfg.providers.length > 0 ? cfg.providers : [cfg];
+        for (const p of providerList) {
+          const pName = (PROVIDER_REGISTRY[p.id || p.provider] || {}).name || p.id || "Provider";
+          const m = (p.id || p.provider) === cfg.provider ? cfg.model : p.model;
+          if (m) {
+            models.push({ providerId: p.id || p.provider, providerName: pName, id: m });
+          }
+        }
+        if (models.length) logLine("ağ/limit hatası — mevcut modeller gösteriliyor", "sys");
+      }
+    } catch (e2) {}
+  }
+  if (models.length === 0) return;
+  modalAllItems = models;
+  openModal("models");
+}
+
+function openProviderMenu() {
+  hideSuggest();
+  modalAllItems = Object.values(PROVIDER_REGISTRY).map((p) => ({ id: p.id, name: p.name, provider: p }));
+  openModal("providers");
+}
+
+function openModeMenu() {
+  hideSuggest();
+  modalAllItems = [
+    { id: "smart", name: "smart — okuma otomatik, yazma/tehlikeli onaylı" },
+    { id: "strict", name: "strict — her şey onay ister" },
+    { id: "autonomous", name: "autonomous — tam otonom, onay yok" },
+  ];
+  openModal("mode");
+}
+
+// ===== AUTCOMPLETE =====
+async function updateSuggestions() {
+  if (suggestMode === "models" || suggestMode === "providers" || suggestMode === "mode") return;
+  const v = cmdInput.value.trim();
+  if (!v) { hideSuggest(); return; }
+  if (!v.startsWith("/")) { hideSuggest(); return; }
+  const lower = v.toLowerCase();
+  if (COMMANDS.includes(lower)) { hideSuggest(); return; }
+  const matches = COMMANDS.filter((c) => c.startsWith(lower) && c !== lower).sort();
+  if (matches.length > 0) showSuggest(matches, "commands");
+  else hideSuggest();
+}
+
+// ===== KOMUT INPUT =====
+const cmdInput = document.getElementById("cmd-input");
+let cmdHistory = [];
+let historyIdx = -1;
+
+if (cmdInput) {
+  cmdInput.addEventListener("keydown", async (ev) => {
+    if (suggestMode === "models" || suggestMode === "providers" || suggestMode === "mode") {
+      if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+        ev.preventDefault();
+        suggestIndex = (suggestIndex + (ev.key === "ArrowDown" ? 1 : -1) + suggestItems.length) % suggestItems.length;
+        updateActiveItem();
+        return;
+      }
+      if (ev.key === "Enter") { ev.preventDefault(); await applySuggest(suggestIndex); return; }
+      if (ev.key === "Escape") { ev.preventDefault(); hideSuggest(); return; }
+      if (ev.key.length === 1) hideSuggest();
+    }
+
+    if (suggestMode === "commands") {
+      if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+        ev.preventDefault();
+        suggestIndex = (suggestIndex + (ev.key === "ArrowDown" ? 1 : -1) + suggestItems.length) % suggestItems.length;
+        updateActiveItem();
+        return;
+      }
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        const typed = cmdInput.value.trim().toLowerCase();
+        const item = suggestItems[suggestIndex];
+        hideSuggest();
+        if (typed.startsWith("/") && COMMANDS.includes(typed)) {
+          cmdInput.value = "";
+          await runCommand(typed);
+          return;
+        }
+        if (item) {
+          cmdInput.value = "";
+          if (item.startsWith("/")) await runCommand(item);
+        }
+        return;
+      }
+      if (ev.key === "Escape") { ev.preventDefault(); hideSuggest(); return; }
+    }
+
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      const cmd = cmdInput.value;
+      if (cmd.trim() === "") return;
+
+      if (cmd.trim().startsWith("/")) {
+        cmdHistory.push(cmd);
+        historyIdx = -1;
+        hideSuggest();
+        await runCommand(cmd);
+        cmdInput.value = "";
+      } else {
+        cmdHistory.push(cmd);
+        historyIdx = -1;
+        userBlock(cmd);
+        cmdInput.value = "";
+        await sendChat(cmd);
+      }
+    } else if (ev.key === "ArrowUp") {
+      ev.preventDefault();
+      if (cmdHistory.length > 0) {
+        if (historyIdx === -1) historyIdx = cmdHistory.length - 1;
+        else if (historyIdx > 0) historyIdx--;
+        cmdInput.value = cmdHistory[historyIdx] || "";
+      }
+    } else if (ev.key === "ArrowDown") {
+      ev.preventDefault();
+      if (historyIdx !== -1) {
+        if (historyIdx < cmdHistory.length - 1) { historyIdx++; cmdInput.value = cmdHistory[historyIdx] || ""; }
+        else { historyIdx = -1; cmdInput.value = ""; }
+      }
+    } else if (ev.key === "l" && ev.ctrlKey) {
+      ev.preventDefault();
+      logEl.innerHTML = "";
+    }
+  });
+
+  cmdInput.addEventListener("keyup", (ev) => {
+    if (ev.key === "Enter" || ev.key === "ArrowUp" || ev.key === "ArrowDown" || ev.key === "Escape") return;
+    updateSuggestions();
+  });
 }
 
 async function applySuggest(index) {
@@ -808,389 +1005,22 @@ async function applySuggest(index) {
     await selectModel(item.providerId, item.id);
   } else if (suggestMode === "providers") {
     hideSuggest();
-    openApiModal(item); // provider seçildi → API key girişi
-  }
-}
-
-async function openModelMenu() {
-  hideSuggest();
-  try {
-    const models = await getModels();
-    if (models.length === 0) {
-      return;
-    }
-    modalAllItems = models;
-    openModal("models");
-  } catch (e) {
-    // sessiz
-  }
-}
-
-function openProviderMenu() {
-  hideSuggest();
-  modalAllItems = Object.values(PROVIDER_REGISTRY).map((p) => ({ id: p.id, name: p.name, provider: p }));
-  openModal("providers");
-}
-
-// Erişim modu seçim menüsü — /mode yazınca açılır
-function openModeMenu() {
-  hideSuggest();
-  modalAllItems = [
-    { id: "smart", name: "smart — okuma otomatik, yazma/tehlikeli onaylı" },
-    { id: "strict", name: "strict — her şey onay ister" },
-    { id: "autonomous", name: "autonomous — tam otonom, onay yok" },
-  ];
-  openModal("mode");
-}
-
-// Autocomplete � sadece "/" ile ba�xlayan yazımlarda öneri
-async function updateSuggestions() {
-  // Menü (models/providers) açıkken otomatik güncelleme yok
-  if (suggestMode === "models" || suggestMode === "providers") return;
-  const v = cmdInput.value.trim();
-  if (!v) {
+    openApiModal(item);
+  } else if (suggestMode === "mode") {
     hideSuggest();
-    return;
-  }
-
-  // Slash'sız yazım �  hiçbir öneri yok (komut sistemi kaldırıldı)
-  if (!v.startsWith("/")) {
-    hideSuggest();
-    return;
-  }
-
-  const lower = v.toLowerCase();
-
-  // Tam komut yazıldıysa öneri gösterme — Enter direkt komutu çalıştırsın
-  // (ör. "/mode" yazınca "/model" önerilmesin, yanlışlıkla model menüsü açılmasın)
-  if (COMMANDS.includes(lower)) {
-    hideSuggest();
-    return;
-  }
-
-  // Slash'lı komut önerisi — prefix match, alfabetik sıralı
-  const matches = COMMANDS.filter((c) => c.startsWith(lower) && c !== lower).sort();
-  if (matches.length > 0) {
-    showSuggest(matches, "commands");
-  } else {
-    hideSuggest();
+    if (!configCache) configCache = {};
+    configCache.mode = item.id;
+    persistConfigCache();
+    try { await invoke("save_config", { config: configCache }); } catch (e) {}
+    logLine("mod: " + item.id, "ok");
   }
 }
 
-if (cmdInput) {
-  cmdInput.addEventListener("keydown", async (ev) => {
-    // Panel açık (models/providers) � menü kontrolü
-    if (suggestMode === "models" || suggestMode === "providers") {
-      if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
-        ev.preventDefault();
-        suggestIndex =
-          (suggestIndex + (ev.key === "ArrowDown" ? 1 : -1) + suggestItems.length) %
-          suggestItems.length;
-        updateActiveItem();
-        return;
-      }
-      if (ev.key === "Enter") {
-        ev.preventDefault();
-        await applySuggest(suggestIndex);
-        return;
-      }
-      if (ev.key === "Escape") {
-        ev.preventDefault();
-        hideSuggest();
-        return;
-      }
-      // Harf/karakter basıldı � menüyü kapat, input'a yazmaya devam et
-      if (ev.key.length === 1) {
-        hideSuggest();
-      }
-    }
-
-    // Komut modunda Esc �  panel kapat
-    if (suggestMode === "commands" && ev.key === "Escape") {
-      ev.preventDefault();
-      hideSuggest();
-      return;
-    }
-
-    // Autocomplete panel (commands) açık � klavye navigasyonu
-    if (suggestMode === "commands") {
-      if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
-        ev.preventDefault();
-        suggestIndex =
-          (suggestIndex + (ev.key === "ArrowDown" ? 1 : -1) + suggestItems.length) %
-          suggestItems.length;
-        updateActiveItem();
-        return;
-      }
-      if (ev.key === "Enter") {
-        ev.preventDefault();
-        // Input'ta TAM komut yazılıysa onu çalıştır (panel önerisi yanıltmasın)
-        const typed = cmdInput.value.trim().toLowerCase();
-        const item = suggestItems[suggestIndex];
-        hideSuggest();
-        if (typed.startsWith("/") && COMMANDS.includes(typed)) {
-          cmdInput.value = "";
-          await runCommand(typed);
-          return;
-        }
-        // Değilse seçili öneriyi tamamla VE hemen çalıştır
-        if (item) {
-          cmdInput.value = "";
-          if (item.startsWith("/")) {
-            await runCommand(item);
-          }
-        }
-        return;
-      }
-    }
-
-    if (ev.key === "Enter") {
-      ev.preventDefault();
-      const cmd = cmdInput.value;
-      if (cmd.trim() === "") {
-        return;
-      }
-
-      // Slash'lı komut �  sessiz çalı�xtır (chatte görünmez)
-      if (cmd.trim().startsWith("/")) {
-        cmdHistory.push(cmd);
-        historyIdx = -1;
-        hideSuggest();
-        await runCommand(cmd);
-        cmdInput.value = "";
-      } else {
-        // Slash'sız yazı �  terminalde göster, LLM'den cevap al, bu sırada input kilitli
-        cmdHistory.push(cmd);
-        historyIdx = -1;
-        term.writeln(C.muted + ">" + C.reset + " " + C.primary + cmd + C.reset);
-        cmdInput.value = "";
-        await sendChat(cmd);
-      }
-    } else if (ev.key === "ArrowUp") {
-      ev.preventDefault();
-      if (cmdHistory.length > 0) {
-        if (historyIdx === -1) {
-          historyIdx = cmdHistory.length - 1;
-        } else if (historyIdx > 0) {
-          historyIdx--;
-        }
-        cmdInput.value = cmdHistory[historyIdx] || "";
-      }
-    } else if (ev.key === "ArrowDown") {
-      ev.preventDefault();
-      if (historyIdx !== -1) {
-        if (historyIdx < cmdHistory.length - 1) {
-          historyIdx++;
-          cmdInput.value = cmdHistory[historyIdx] || "";
-        } else {
-          historyIdx = -1;
-          cmdInput.value = "";
-        }
-      }
-    } else if (ev.key === "l" && ev.ctrlKey) {
-      ev.preventDefault();
-      term.clear();
-    }
-  });
-
-  // Yazınca autocomplete güncelle
-  cmdInput.addEventListener("keyup", (ev) => {
-    if (
-      ev.key === "Enter" ||
-      ev.key === "ArrowUp" ||
-      ev.key === "ArrowDown" ||
-      ev.key === "Escape"
-    ) {
-      return;
-    }
-    updateSuggestions();
-  });
-}
-
-// ===== LLM Chat — slash'sız yazılara cevap =====
-
-// Hızlı akıcı yazma animasyonu — beyaz metin + akıllı auto-scroll
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-function autoScroll() {
-  try {
-    const vp = term.element && term.element.querySelector(".xterm-viewport");
-    if (!vp) return;
-    // Kullanıcı yukarı kaydırdıysa kilitle (okuma modu)
-    const isAtBottom = vp.scrollTop >= vp.scrollHeight - vp.clientHeight - 12;
-    if (isAtBottom) term.scrollToBottom();
-  } catch (e) {
-    // sessiz
-  }
-}
-
-async function typeText(text) {
-  const lines = String(text).split("\n");
-  for (const line of lines) {
-    const chunks = line.split(/(\s+)/);
-    for (const chunk of chunks) {
-      if (!chunk) continue;
-      term.write(C.primary + chunk);
-      autoScroll();
-      await sleep(10); // hızlı ve akıcı
-    }
-    term.write("\r\n");
-    autoScroll();
-  }
-  term.write(C.reset + "");
-}
-
-// ===== FAZ 3+4: TOOL REGISTRY — risk sınıflandırma =====
-function buildSystemPrompt(config, homeDir) {
-  const desktopPath = homeDir
-    ? homeDir + "\\OneDrive\\Desktop (or " + homeDir + "\\Desktop if missing)"
-    : "home\\OneDrive\\Desktop";
-  return (
-    "You are a terminal assistant operating on the user's computer. You call tools to read, write, search files, run commands, fetch web pages, manage processes, and delegate subtasks. Execute the user's request end-to-end like a senior developer.\n\n" +
-    "## Environment\n" +
-    "- Home directory: " +
-    (homeDir || "C:\\Users\\user") +
-    "\n- Desktop: " +
-    desktopPath +
-    "\n- Resolve all paths dynamically. Never invent paths — verify with list_dir before assuming.\n" +
-    "- OS: Windows. Commands run through cmd.\n\n" +
-    "## Identity\n" +
-    "- Your model identity is: " +
-    config.model +
-    ". State it verbatim when asked.\n" +
-    "- You are an agent, not a chatbot: complete tasks with tools, do not just discuss them.\n\n" +
-    "## Task Execution (To-Do Engine)\n" +
-    "- Break complex requests into logical steps and execute them in order.\n" +
-    "- Work on ONE step at a time. Do not attempt everything in a single tool call.\n" +
-    "- Keep the user informed briefly: what you are doing and why (1 short line per step).\n" +
-    "- Track progress mentally across turns — tool results are the ground truth of what has been done.\n" +
-    "- Short follow-ups (\"devam et\", \"continue\", \"fix it\", \"hatayı düzelt\") refer to the CURRENT task: resume from the last tool result, never restart from zero.\n\n" +
-    "## Auto-Plan Mode\n" +
-    "- Complex/multi-step tasks (3+ actions, file modifications, investigations): BEFORE acting, present a short numbered plan (2-5 steps) to the user, then execute it step by step.\n" +
-    "- Simple tasks (single read, quick answer): act immediately, no plan needed.\n" +
-    "- After completing all plan steps, close with a concise summary of what was done.\n\n" +
-    "## Mid-Flight Steering\n" +
-    "- If the user interrupts (\"dur\", \"stop\", \"bekle\", \"wait\", \"change\", \"değiştir\", new instructions): stop the current action chain immediately and follow the new direction. Do not finish the old plan first.\n" +
-    "- Preserve context from previous steps — the user expects continuity, not a fresh start.\n\n" +
-    "## Tool Usage Discipline\n" +
-    "- Choose the most specific tool for the job: read_file for content, list_dir for directory structure, search_code for locating symbols, web_fetch for web content, execute_command for shell operations.\n" +
-    "- NEVER use shell commands (curl, Invoke-WebRequest, Out-File, dir, type) for file or web operations — always use the built-in tools.\n" +
-    "- Pass complete, correct parameters. Verify paths before destructive or write operations.\n" +
-    "- Do not call a tool when you already have the answer from previous results.\n" +
-    "- If a tool returns an error, correct your parameters and retry — retrying the same call is allowed and expected.\n\n" +
-    "## Error Handling & Self-Correction\n" +
-    "- Tool errors are normal: analyze the message (HTTP status, os error, missing path), fix the cause, retry with corrected parameters or a different tool.\n" +
-    "- NEVER abandon the task or send a greeting (\"Hello! How can I help?\") after an error.\n" +
-    "- If the same approach fails twice, change strategy entirely (different tool, different path, different command).\n\n" +
-    "## Verification & Quality\n" +
-    "- After write/edit/delete operations, verify the result (read_file or list_dir) before reporting success.\n" +
-    "- Do not report success based on assumption — confirm with tool output.\n" +
-    "- Finish with a short summary: what was done, what changed, and any follow-up needed.\n\n" +
-    "## Memory\n" +
-    "- Use manage_memory to persist important project facts (decisions, structures, learned gotchas) for future sessions.\n" +
-    "- Read memory before starting a task that seems related to previous work.\n" +
-    "- Memory keys should be short and semantic.\n\n" +
-    "## Sub-Agent Delegation\n" +
-    "- Use spawn_sub_agent for independent, well-scoped subtasks that do not need your current context (isolated research, long computations, separate concerns).\n" +
-    "- Keep the main task and context for yourself; delegate only what can stand alone.\n" +
-    "- Incorporate the sub-agent report into your final answer.\n\n" +
-    "## Safety & Guardrails\n" +
-    "- NEVER propose or run destructive commands (rm -rf, format, shutdown, diskpart, mkfs, Remove-Item -Recurse).\n" +
-    "- Be careful around sensitive paths (.env, .git, node_modules, system folders) — ask or avoid modifying them.\n" +
-    "- Respect permission prompts: if approval is required, wait; do not attempt to bypass it.\n\n" +
-    "## Communication\n" +
-    "- Respond in the user's language (Turkish unless requested otherwise).\n" +
-    "- Be concise: short sentences, no filler. Use plain text — NEVER markdown (*, **, #, `, code fences).\n" +
-    "- Plans and summaries: simple numbered lines, no decorations."
-  );
-}
-
-// ===== FAZ 5: CONTEXT MANAGER — token tahmini + otomatik sıkıştırma =====
-
-// Modüler bağlam limiti: config.json'daki contextLimit (mutlak) veya 128k varsayılan.
-// Hardcode model haritası yok.
-function contextLimitOf(config) {
-  const v = config && config.contextLimit ? Number(config.contextLimit) : 0;
-  return v >= 8000 && v <= 4000000 ? v : 131072;
-}
-
-// Oran: 1 = %100, 0.8 = %80 — config.json'daki contextRatio, default 0.8
-function contextRatioOf(config) {
-  const r = config && config.contextRatio !== undefined ? Number(config.contextRatio) : NaN;
-  return !isNaN(r) && r > 0 && r <= 1 ? r : 0.8;
-}
-
-// Eşik = limit * oran
-function compactThresholdFor(config) {
-  return Math.floor(contextLimitOf(config) * contextRatioOf(config));
-}
-
-function estimateTokens(history) {
-  let total = 0;
-  for (const m of history) {
-    total += Math.ceil(String(m.content || "").length / 4);
-  }
-  return total;
-}
-
-function fmtK(n) {
-  return n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n);
-}
-
-function updateTokenCounter(history, reply) {
-  const el = document.getElementById("token-label");
-  if (!el) return;
-  const inTok = estimateTokens(history);
-  const outTok = reply ? Math.ceil(String(reply).length / 4) : 0;
-  el.textContent =
-    "[In " + fmtK(inTok) + " | Out " + fmtK(outTok) + " | Total " + fmtK(inTok + outTok) + "]";
-}
-
-// Sıkıştırma: sistem + ilk kullanıcı korunur, araç çıktıları budanır
-function compactHistory(history) {
-  if (!history || history.length <= 2) return history;
-  const compacted = [history[0]]; // sistem promptu
-  if (history[1]) compacted.push(history[1]); // ilk kullanıcı mesajı (ana hedef)
-  for (let i = 2; i < history.length; i++) {
-    const m = history[i];
-    if (m.role === "assistant") {
-      compacted.push({ role: "assistant", content: String(m.content).slice(0, 500) });
-    } else if (String(m.content).startsWith("Araç sonuçları:")) {
-      const lineCount = String(m.content).split("\n").length;
-      const snippet = String(m.content).slice(0, 120);
-      compacted.push({
-        role: "user",
-        content:
-          "[SYSTEM: " + lineCount + " satır araç çıktısı okundu ve analiz edildi — özet: " + snippet + "]",
-      });
-    } else {
-      compacted.push(m);
-    }
-  }
-  return compacted;
-}
-
-// ===== FAZ 3+4: TOOL REGISTRY — risk sınıflandırma =====
+// ===== TOOL REGISTRY =====
 const TOOL_RISKS = {
-  read_file: "low",
-  list_dir: "low",
-  search_code: "low",
-  glob_files: "low",
-  web_fetch: "low",
-  analyze_codebase: "low",
-  write_file: "medium",
-  edit_file: "medium",
-  create_dir: "medium",
-  apply_diff: "medium",
-  manage_memory: "medium",
-  browser_automation: "medium",
-  spawn_sub_agent: "medium",
-  delete_file: "high",
-  execute_command: "high",
-  manage_background_process: "high",
-  github_action: "high",
+  read_file: "low", list_dir: "low", search_code: "low", glob_files: "low", web_fetch: "low", analyze_codebase: "low",
+  write_file: "medium", edit_file: "medium", create_dir: "medium", apply_diff: "medium", manage_memory: "medium", browser_automation: "medium", spawn_sub_agent: "medium",
+  delete_file: "high", execute_command: "high", manage_background_process: "high", github_action: "high",
 };
 
 let sessionAllow = {};
@@ -1213,22 +1043,17 @@ async function addPersistentAllow(toolId, params) {
   if (!configCache.allowList.includes(key)) {
     configCache.allowList.push(key);
     persistConfigCache();
-    try {
-      await invoke("save_config", { config: configCache });
-    } catch (e) {}
+    try { await invoke("save_config", { config: configCache }); } catch (e) {}
   }
 }
 
+// ===== ONAY MODALI + DIFF =====
 const approvalModal = document.getElementById("approval-modal");
 const apprTool = document.getElementById("appr-tool");
 const apprRisk = document.getElementById("appr-risk");
 const apprDetail = document.getElementById("appr-detail");
 const apprEdit = document.getElementById("appr-edit");
 const apprEditInput = document.getElementById("appr-edit-input");
-
-function escapeHtml(s) {
-  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
 
 function wordDiff(oldText, newText) {
   const o = String(oldText || "");
@@ -1271,17 +1096,12 @@ function parseUnifiedDiff(diffContent) {
 function renderDiffHtml(toolId, params) {
   if (toolId === "apply_diff") {
     const { lines, add, del } = parseUnifiedDiff(params.diff_content);
-    let html = '<div class="diff-metrics">📄 ' + escapeHtml(params.path || "") + ' &nbsp; <span class="m-add">+' + add + '</span> <span class="m-del">-' + del + "</span></div>";
+    let html = '<div class="diff-metrics">' + escapeHtml(shortPath(params.path || "")) + ' <span class="m-add">+' + add + '</span> <span class="m-del">-' + del + "</span></div>";
     for (const l of lines) {
-      if (l.type === "hunk") {
-        html += '<div class="diff-hunk">' + escapeHtml(l.text) + "</div>";
-      } else if (l.type === "add") {
-        html += '<div class="diff-line diff-add"><span class="diff-num"></span><span class="diff-num">' + (l.new || "") + '</span><span class="diff-sign">+</span><span>' + escapeHtml(l.text) + "</span></div>";
-      } else if (l.type === "del") {
-        html += '<div class="diff-line diff-del"><span class="diff-num">' + (l.old || "") + '</span><span class="diff-num"></span><span class="diff-sign">-</span><span>' + escapeHtml(l.text) + "</span></div>";
-      } else {
-        html += '<div class="diff-line diff-context"><span class="diff-num">' + (l.old || "") + '</span><span class="diff-num">' + (l.new || "") + '</span><span class="diff-sign"> </span><span>' + escapeHtml(l.text) + "</span></div>";
-      }
+      if (l.type === "hunk") html += '<div class="diff-hunk">' + escapeHtml(l.text) + "</div>";
+      else if (l.type === "add") html += '<div class="diff-line diff-add"><span class="diff-num"></span><span class="diff-num">' + (l.new || "") + '</span><span class="diff-sign">+</span><span>' + escapeHtml(l.text) + "</span></div>";
+      else if (l.type === "del") html += '<div class="diff-line diff-del"><span class="diff-num">' + (l.old || "") + '</span><span class="diff-num"></span><span class="diff-sign">-</span><span>' + escapeHtml(l.text) + "</span></div>";
+      else html += '<div class="diff-line diff-context"><span class="diff-num">' + (l.old || "") + '</span><span class="diff-num">' + (l.new || "") + '</span><span class="diff-sign"> </span><span>' + escapeHtml(l.text) + "</span></div>";
     }
     return html;
   }
@@ -1289,17 +1109,13 @@ function renderDiffHtml(toolId, params) {
   if (toolId === "edit_file") {
     const oldLines = String(params.old_string || params.old || "").split("\n");
     const newLines = String(params.new_string || params.new || "").split("\n");
-    let html = '<div class="diff-metrics">📄 ' + escapeHtml(params.path || "") + ' &nbsp; <span class="m-add">+' + newLines.length + '</span> <span class="m-del">-' + oldLines.length + "</span></div>";
+    let html = '<div class="diff-metrics">' + escapeHtml(shortPath(params.path || "")) + ' <span class="m-add">+' + newLines.length + '</span> <span class="m-del">-' + oldLines.length + "</span></div>";
     let o = 1, n = 1;
-    for (const ol of oldLines) {
-      html += '<div class="diff-line diff-del"><span class="diff-num">' + o++ + '</span><span class="diff-num"></span><span class="diff-sign">-</span><span>' + escapeHtml(ol) + "</span></div>";
-    }
-    for (const nl of newLines) {
-      html += '<div class="diff-line diff-add"><span class="diff-num"></span><span class="diff-num">' + n++ + '</span><span class="diff-sign">+</span><span>' + escapeHtml(nl) + "</span></div>";
-    }
+    for (const ol of oldLines) html += '<div class="diff-line diff-del"><span class="diff-num">' + o++ + '</span><span class="diff-num"></span><span class="diff-sign">-</span><span>' + escapeHtml(ol) + "</span></div>";
+    for (const nl of newLines) html += '<div class="diff-line diff-add"><span class="diff-num"></span><span class="diff-num">' + n++ + '</span><span class="diff-sign">+</span><span>' + escapeHtml(nl) + "</span></div>";
     if (oldLines.length === 1 && newLines.length === 1) {
       const wd = wordDiff(params.old_string || params.old, params.new_string || params.new);
-      html = '<div class="diff-metrics">📄 ' + escapeHtml(params.path || "") + ' &nbsp; <span class="m-add">+1</span> <span class="m-del">-1</span></div>' +
+      html = '<div class="diff-metrics">' + escapeHtml(shortPath(params.path || "")) + ' <span class="m-add">+1</span> <span class="m-del">-1</span></div>' +
         '<div class="diff-line diff-del"><span class="diff-num">1</span><span class="diff-num"></span><span class="diff-sign">-</span><span>' + wd.oldHtml + "</span></div>" +
         '<div class="diff-line diff-add"><span class="diff-num"></span><span class="diff-num">1</span><span class="diff-sign">+</span><span>' + wd.newHtml + "</span></div>";
     }
@@ -1308,14 +1124,10 @@ function renderDiffHtml(toolId, params) {
 
   if (toolId === "write_file") {
     const contentLines = String(params.content || "").split("\n");
-    let html = '<div class="diff-metrics">📄 ' + escapeHtml(params.path || "") + ' &nbsp; <span class="m-add">+' + contentLines.length + " satır yeni dosya</span></div>";
+    let html = '<div class="diff-metrics">' + escapeHtml(shortPath(params.path || "")) + ' <span class="m-add">+' + contentLines.length + " satır yeni dosya</span></div>";
     let n = 1;
-    for (const cl of contentLines.slice(0, 60)) {
-      html += '<div class="diff-line diff-add"><span class="diff-num"></span><span class="diff-num">' + n++ + '</span><span class="diff-sign">+</span><span>' + escapeHtml(cl) + "</span></div>";
-    }
-    if (contentLines.length > 60) {
-      html += '<div class="diff-hunk">… ' + (contentLines.length - 60) + " satır gizlendi</div>";
-    }
+    for (const cl of contentLines.slice(0, 60)) html += '<div class="diff-line diff-add"><span class="diff-num"></span><span class="diff-num">' + n++ + '</span><span class="diff-sign">+</span><span>' + escapeHtml(cl) + "</span></div>";
+    if (contentLines.length > 60) html += '<div class="diff-hunk">... ' + (contentLines.length - 60) + " satır gizlendi</div>";
     return html;
   }
 
@@ -1327,11 +1139,8 @@ function buildToolDetailHtml(toolId, params) {
   if (diffHtml) return diffHtml;
   let text = "";
   switch (toolId) {
-    case "execute_command":
-      text = "> " + (params.command || params.cmd || "");
-      break;
-    default:
-      text = params.path || params.pattern || params.url || JSON.stringify(params);
+    case "execute_command": text = "> " + (params.command || params.cmd || ""); break;
+    default: text = params.path || params.pattern || params.url || JSON.stringify(params);
   }
   return '<div class="diff-line diff-context"><span class="diff-num"></span><span class="diff-num"></span><span class="diff-sign"> </span><span>' + escapeHtml(text) + "</span></div>";
 }
@@ -1339,6 +1148,8 @@ function buildToolDetailHtml(toolId, params) {
 function stopCountdown() {
   clearInterval(approvalTimer);
   approvalTimer = null;
+  const hint = document.querySelector(".approval-hint");
+  if (hint) hint.textContent = "[y] onayla · [a] oturum için · [p] her zaman · [n] reddet · [e] düzenle · [Esc] iptal";
 }
 
 function startCountdown() {
@@ -1415,6 +1226,7 @@ function applyEditToParams() {
   apprEdit.style.display = "none";
 }
 
+// ===== TOOL YÜRÜTME =====
 function buildToolSummary(toolId, result) {
   switch (toolId) {
     case "read_file": return String(result.content || "").slice(0, 2000);
@@ -1445,71 +1257,122 @@ function buildToolSummary(toolId, result) {
   }
 }
 
+function pathShort(p) {
+  const home = (configCache && configCache.home) || "";
+  return String(p || "");
+}
+
 async function executeTool(toolId, params, approved) {
   const started = Date.now();
   const isCmd = toolId === "execute_command";
   const cmdStr = params.command || params.cmd || "";
+  const target = params.path || params.url || params.pattern || "";
 
-  if (isCmd) {
-    term.writeln(C.box + "┌─" + C.reset + " ⚡ " + C.primary + cmdStr.slice(0, 55) + C.reset + " " + C.box + "─".repeat(8) + " " + C.yellow + "[RUNNING]" + C.reset + " " + C.box + "─┐" + C.reset);
-    autoScroll();
+  // Dinamik yol — header'ı son işlem dizinine güncelle
+  if (params.path) {
+    const dir = String(params.path).replace(/[\\/][^\\/]*$/, "");
+    if (dir && dir !== String(params.path)) updatePath(dir);
   }
+
+  // AgentActionCard — [>] ile başlar, yol kısaltılır
+  const shortTarget = shortPath(target);
+  const label = isCmd
+    ? "execute_command  " + cmdStr.slice(0, 60)
+    : toolId + "  " + shortTarget.slice(0, 60);
+  const item = logItem(label, { time: "", status: "run" });
 
   try {
     const result = await invoke("execute_approved_tool", { config: configCache, toolId, params, approved });
     const elapsed = ((Date.now() - started) / 1000).toFixed(1);
+    item.setTime(elapsed + "s");
 
+    const failed = result.exit_code !== 0 && !result.message && !result.content && !result.entries && !result.matches && !result.files && !result.sub_agent_reply;
+    if (failed) {
+      item.setStatus("err");
+      item.lbl.classList.add("err");
+    } else {
+      item.setStatus("ok");
+    }
+
+    // Codex tarzı diff özeti
+    let summary = null;
+    if (toolId === "write_file") {
+      const n = String(params.content || "").split("\n").length;
+      summary = "files: 1 · +" + n;
+    } else if (toolId === "edit_file") {
+      const oldN = String(params.old_string || params.old || "").split("\n").length;
+      const newN = String(params.new_string || params.new || "").split("\n").length;
+      summary = "files: 1 · +" + newN + " -" + oldN;
+    } else if (toolId === "apply_diff") {
+      const { add, del } = parseUnifiedDiff(params.diff_content);
+      summary = "files: 1 · +" + add + " -" + del;
+    } else if (toolId === "delete_file") {
+      summary = "files: 1 · -1";
+    }
+
+    // Body — açılınca görünen içerik (summary + çıktı)
+    let bodyParts = [];
+    if (summary) bodyParts.push('[summary] ' + summary);
     if (isCmd) {
       const stdoutLines = String(result.stdout || "").split("\n").filter((l) => l.trim());
       const stderrLines = String(result.stderr || "").split("\n").filter((l) => l.trim());
       const all = stdoutLines.length + stderrLines.length;
       let shownOut = stdoutLines, shownErr = stderrLines, hidden = 0;
-      if (all > 22) { hidden = all - 22; shownOut = stdoutLines.slice(0, 16); shownErr = stderrLines.slice(0, 6); }
-      for (const l of shownOut) { term.writeln(C.box + "│ " + C.reset + C.secondary + l.slice(0, 150) + C.reset); autoScroll(); }
-      for (const l of shownErr) { term.writeln(C.box + "│ " + C.reset + C.red + l.slice(0, 150) + C.reset); autoScroll(); }
-      if (hidden > 0) { term.writeln(C.box + "│ " + C.reset + C.muted + "… " + hidden + " satır gizlendi (tamamı: " + all + ")" + C.reset); }
-      const ok = result.exit_code === 0;
-      const badge = ok ? C.green + "[SUCCESS]" + C.reset + C.muted + " · " + elapsed + "s" + C.reset : C.red + "[FAILED]" + C.reset + C.muted + " · " + elapsed + "s" + C.reset;
-      term.writeln(C.box + "└" + C.reset + "─".repeat(34) + " " + badge + " " + C.box + "─┘" + C.reset);
-      autoScroll();
-    } else {
-      const target = params.path || params.url || params.pattern || "";
-      term.writeln(C.green + "✓ " + C.reset + C.secondary + toolId + C.reset + (target ? C.muted + "  " + target.slice(0, 60) + C.reset : "") + C.muted + "  (" + elapsed + "s)" + C.reset);
-      if (toolId === "read_file") {
-        const lines = String(result.content || "").split("\n");
-        for (const l of lines.slice(0, 60)) term.writeln(C.secondary + l + C.reset);
-        if (lines.length > 60) term.writeln(C.muted + "... (" + (lines.length - 60) + " satır daha)" + C.reset);
-      } else if (toolId === "list_dir") {
-        for (const e of result.entries || []) {
-          term.writeln((e.is_dir ? C.primary + e.name + "/" : C.secondary + e.name) + C.reset);
-        }
-      } else if (toolId === "search_code") {
-        for (const mt of result.matches || []) {
-          term.writeln(C.secondary + mt.file + ":" + mt.line + C.reset + " " + C.primary + mt.text + C.reset);
-        }
-        if ((result.matches || []).length === 0) term.writeln(C.muted + "(eşleşme yok)" + C.reset);
-      } else {
-        if (result.message) term.writeln(C.secondary + result.message + C.reset);
+      if (all > 60) { hidden = all - 60; shownOut = stdoutLines.slice(0, 45); shownErr = stderrLines.slice(0, 15); }
+      bodyParts.push(shownOut.join("\n"));
+      if (shownErr.length) bodyParts.push('[stderr]\n' + shownErr.join("\n"));
+      if (hidden > 0) bodyParts.push('... ' + hidden + " satır gizlendi");
+      if (result.exit_code !== 0) bodyParts.push('[exit] ' + result.exit_code);
+    } else if (toolId === "list_dir") {
+      // 3 s?tunlu esnek grid
+      const entries = result.entries || [];
+      let gridHtml = '<div class="dir-grid">';
+      if (entries.length === 0) gridHtml = '<div class="log-item-body-content">(bo?)</div>';
+      for (const e of entries.slice(0, 120)) {
+        gridHtml += e.is_dir
+          ? '<span class="dir">' + escapeHtml(e.name) + "/</span>"
+          : '<span class="file">' + escapeHtml(e.name) + "</span>";
       }
+      gridHtml += "</div>";
+      item.body.innerHTML = gridHtml;
+    } else if (toolId === "read_file") {
+      const lines = String(result.content || "").split("\n");
+      const numbered = lines.slice(0, 80).map((l, i) => String(i + 1).padStart(4, " ") + " | " + l).join("\n");
+      bodyParts.push(numbered);
+      if (lines.length > 80) bodyParts.push('... ' + (lines.length - 80) + " satır daha");
+    } else if (toolId === "search_code" || toolId === "analyze_codebase") {
+      const matches = result.matches || [];
+      bodyParts.push(matches.slice(0, 40).map((m) => String(m.file).split(/[\\/]/).pop() + ":" + m.line + "  " + m.text).join("\n") || "(eşleşme yok)");
+    } else if (toolId === "web_fetch") {
+      bodyParts.push(String(result.content || "").slice(0, 4000));
+    } else if (toolId === "glob_files") {
+      bodyParts.push((result.files || []).join("\n"));
+    } else {
+      if (result.message) bodyParts.push(result.message);
     }
-    term.writeln("");
+
+    // write/edit → interaktif diff viewer (VS Code stili)
+    if (toolId === "write_file" || toolId === "edit_file" || toolId === "apply_diff") {
+      item.body.innerHTML = renderDiffHtml(toolId, params);
+    } else if (toolId === "list_dir") {
+      // grid zaten item.body.innerHTML'e yazıldı — dokunma (ezme bug'ı düzeltildi)
+    } else {
+      item.body.textContent = bodyParts.join("\n\n");
+    }
     autoScroll();
     return buildToolSummary(toolId, result);
   } catch (e) {
     const elapsed = ((Date.now() - started) / 1000).toFixed(1);
-    if (isCmd) {
-      term.writeln(C.box + "└" + C.reset + "─".repeat(34) + " " + C.red + "[FAILED]" + C.reset + C.muted + " · " + elapsed + "s" + C.reset + " " + C.box + "─┘" + C.reset);
-      term.writeln(C.box + "│ " + C.reset + C.red + String(e).slice(0, 150) + C.reset);
-    } else {
-      term.writeln(C.muted + "✗ " + toolId + ": " + C.reset + C.secondary + e + C.reset);
-    }
-    term.writeln("");
+    item.setTime(elapsed + "s");
+    item.setStatus("err");
+    item.lbl.classList.add("err");
+    item.body.textContent = String(e);
     autoScroll();
     return "HATA: " + e;
   }
 }
 
-// NATIVE tool çağrısını işle — call: {id, name, arguments}
+// NATIVE tool çağrısı
 async function processToolItem(call) {
   const toolId = call.name;
   const params = (call.arguments && typeof call.arguments === "object") ? call.arguments : {};
@@ -1529,13 +1392,12 @@ async function processToolItem(call) {
   try {
     check = await invoke("check_tool", { config: configCache, toolId, params });
   } catch (e) {
-    term.writeln(C.muted + "hata: " + C.reset + C.secondary + e + C.reset);
+    renderAlert("hata: " + e);
     return "HATA: " + e;
   }
 
   if (check.decision === "deny") {
-    term.writeln(C.muted + "⛔ engellendi: " + C.reset + C.secondary + check.reason + C.reset);
-    term.writeln("");
+    renderAlert("engellendi: " + check.reason);
     return "ENGELLENDİ: " + check.reason;
   }
   if (check.decision === "allow") {
@@ -1544,14 +1406,13 @@ async function processToolItem(call) {
 
   const decision = await showApproval(toolId, params, check.risk || risk);
   if (decision === "deny") {
-    term.writeln(C.muted + "⛔ reddedildi: " + C.reset + C.secondary + toolId + C.reset);
-    term.writeln("");
+    renderAlert("reddedildi: " + toolId);
     return "KULLANICI REDDETTİ";
   }
   return await executeTool(toolId, params, true);
 }
 
-// ===== FAZ 5: NATIVE CHAT — ReAct döngüsü =====
+// ===== NATIVE CHAT — ReAct döngüsü =====
 async function sendChat(message) {
   if (!invoke) return;
   cmdInput.disabled = true;
@@ -1560,41 +1421,45 @@ async function sendChat(message) {
     if (!config) {
       cmdInput.disabled = false;
       cmdInput.focus();
-      return;
+        return;
     }
     let homeDir = "";
     try {
       homeDir = await invoke("home");
+      HOME_DIR = homeDir;
     } catch (e) {}
 
     let history = [
       { role: "system", content: buildSystemPrompt(config, homeDir) },
       { role: "user", content: message },
     ];
-    const maxTurns = 30;
+    const maxTurns = 12;
     const isShortPrompt = message.trim().length < 24;
 
     for (let turn = 0; turn < maxTurns; turn++) {
       if (!isShortPrompt && estimateTokens(history) > compactThresholdFor(config)) {
         history = compactHistory(history);
-        term.writeln(C.muted + "[SYSTEM: bağlam sıkıştırıldı — eski çıktılar özetlendi]" + C.reset);
+        logLine("[SYSTEM: bağlam sıkıştırıldı — eski çıktılar özetlendi]", "sys");
       }
 
-      const thinkStart = Date.now();
-      term.writeln(C.think + "│  Düşünüyor..." + C.reset);
-
+      countApiCall(); // LLM isteği — limit sayacı
       const reply = await invoke("chat_completion", { config, messages: history });
-      const thinkMs = Date.now() - thinkStart;
-      updateTokenCounter(history, reply);
-
-      term.write("\x1b[1A\x1b[2K");
-      term.writeln(C.think + "> Düşünüyor... " + C.reset + C.muted + "[" + C.reset + C.secondary + (thinkMs / 1000).toFixed(1) + "s" + C.reset + C.muted + "]" + C.reset);
+      updateCtxGauge(history, reply);
 
       const text = String(reply.text || "");
       const toolCalls = reply.tool_calls || [];
 
-      if (text.trim()) {
-        await typeText(text);
+      // Ara açıklamalar (tool çağrısı olan tur) → kart dışında sönük canlı akış
+      if (text.trim() && toolCalls.length > 0) {
+        await typeText(text, "dim");
+      }
+
+      // Nihai yanıt (tool yok) — üst boşlukla, normal parlaklıkta
+      if (text.trim() && toolCalls.length === 0) {
+        const gap = document.createElement("div");
+        gap.className = "final-gap";
+        logEl.appendChild(gap);
+        await typeText(text, "");
       }
 
       if (toolCalls.length === 0) {
@@ -1610,29 +1475,29 @@ async function sendChat(message) {
       history.push({
         role: "assistant",
         content: text || "",
-        toolCalls: toolCalls.map((c) => ({ id: c.id, name: c.name, arguments: c.arguments })),
+        toolCalls: toolCalls.map((c) => ({
+          id: c.id,
+          name: c.name,
+          arguments: c.arguments,
+          thoughtSignature: c.thoughtSignature || null,
+        })),
       });
       for (let i = 0; i < toolCalls.length; i++) {
         history.push({ role: "tool", toolCallId: toolCalls[i].id, content: results[i] || "" });
       }
     }
-    term.writeln("");
   } catch (e) {
-    term.writeln(C.muted + "hata: " + C.reset + C.secondary + e + C.reset);
+    renderAlert("hata: " + e);
   } finally {
     cmdInput.disabled = false;
     cmdInput.focus();
   }
 }
 
-// ===== Komut çalıştırma — sadece "/" ile başlayan komutlar =====
+// ===== KOMUTLAR =====
 async function runCommand(cmd) {
   const trimmed = cmd.trim();
-
-  // Slash'sız yazım �  sessiz geç (komut sistemi kaldırıldı)
-  if (!trimmed.startsWith("/")) {
-    return;
-  }
+  if (!trimmed.startsWith("/")) return;
 
   const parts = trimmed.split(/\s+/);
   const rawName = parts[0];
@@ -1650,17 +1515,7 @@ async function runCommand(cmd) {
         await openProviderMenu();
         break;
 
-      case "undo":
-        try {
-          const undoMsg = await invoke("undo_last");
-          term.writeln(C.green + "↩ " + C.reset + C.secondary + undoMsg + C.reset);
-        } catch (e) {
-          term.writeln(C.muted + "undo: " + C.reset + C.secondary + e + C.reset);
-        }
-        break;
-
       case "permissions":
-        // Mod seçim menüsü — kullanıcının isteği: /permissions -> mod menüsü
         openModeMenu();
         break;
 
@@ -1668,103 +1523,91 @@ async function runCommand(cmd) {
         if (args[0]) {
           const val = parseFloat(args[0].replace(",", "."));
           if (!isNaN(val) && val > 0 && val <= 1) {
-            // Oran: 0.8 = %80
             if (!configCache) configCache = {};
             configCache.contextRatio = val;
             persistConfigCache();
-            try {
-              await invoke("save_config", { config: configCache });
-            } catch (e) {}
-            term.writeln(
-              C.green + "✓ context oranı: " + C.reset + C.primary + val + C.reset +
-              C.muted + " (" + Math.round(val * 100) + "%) — eşik: " + Math.floor(contextLimitOf(configCache) * val) + C.reset
-            );
+            try { await invoke("save_config", { config: configCache }); } catch (e) {}
+            logLine("context oranı: " + val + " (" + Math.round(val * 100) + "%) — eşik: " + Math.floor(contextLimitOf(configCache) * val), "ok");
           } else if (!isNaN(val) && val >= 8000 && val <= 4000000) {
-            // Mutlak limit: 1000000 gibi
             if (!configCache) configCache = {};
             configCache.contextLimit = Math.floor(val);
             persistConfigCache();
-            try {
-              await invoke("save_config", { config: configCache });
-            } catch (e) {}
-            term.writeln(
-              C.green + "✓ context limit: " + C.reset + C.primary + Math.floor(val) + C.reset +
-              C.muted + " (eşik: " + Math.floor(val * contextRatioOf(configCache)) + ")" + C.reset
-            );
+            try { await invoke("save_config", { config: configCache }); } catch (e) {}
+            logLine("context limit: " + Math.floor(val) + " — eşik: " + Math.floor(val * contextRatioOf(configCache)), "ok");
           } else {
-            term.writeln(C.muted + "geçersiz — 0-1 arası oran (0.8 = %80) veya 8000-4000000 arası limit girin" + C.reset);
+            logLine("geçersiz — 0-1 arası oran (0.8 = %80) veya 8000-4000000 arası limit girin", "err");
           }
         } else {
           const limit = contextLimitOf(configCache);
           const ratio = contextRatioOf(configCache);
-          term.writeln(
-            C.primary + "context: " + C.reset + C.secondary + "limit " + limit + C.reset +
-            C.muted + " · " + C.reset + C.secondary + "oran " + ratio + C.reset +
-            C.muted + " (" + Math.round(ratio * 100) + "%)" + C.reset +
-            C.muted + " · " + C.reset + C.secondary + "eşik " + Math.floor(limit * ratio) + C.reset +
-            C.muted + " — config.json'dan contextLimit / contextRatio ile değiştirilebilir" + C.reset
-          );
+          logLine("context: limit " + limit + " · oran " + ratio + " (%" + Math.round(ratio * 100) + ") · eşik " + Math.floor(limit * ratio) + " — /context 0.8 veya /context 1000000 ile değiştirilebilir", "dim");
+        }
+        break;
+
+      case "undo":
+        try {
+          const undoMsg = await invoke("undo_last");
+          logLine(undoMsg, "ok");
+        } catch (e) {
+          renderAlert("undo: " + e);
         }
         break;
 
       case "clear":
-        term.clear();
+        logEl.innerHTML = "";
         break;
 
       default:
-        // Slash'lı ama tanınmayan komut �  hata
-        term.writeln(C.muted + "bilinmeyen komut: " + C.reset + C.primary + rawName + C.reset);
+        renderAlert("bilinmeyen komut: " + rawName);
         break;
     }
   } catch (e) {
-    term.writeln(C.muted + "hata: " + C.reset + C.secondary + e + C.reset);
+    renderAlert("hata: " + e);
   }
 }
 
-// ===== Resize handling =====
-window.addEventListener("resize", () => {
-  fitAddon.fit();
-});
-
-// ===== Init � config var mı? =====
+// ===== INIT =====
 async function init() {
-  // localStorage'dan cache yükle  get_config hata verse bile hazır
   loadConfigCache();
 
   if (!invoke) {
-    // Tauri API yok � provider seçimi göster
     modalAllItems = Object.values(PROVIDER_REGISTRY).map((p) => ({ id: p.id, name: p.name, provider: p }));
     openModal("providers");
     return;
   }
   try {
     const config = await invoke("get_config");
+    try { HOME_DIR = await invoke("home"); } catch (e) {}
     const hasConfig = config && config.apiKey;
     if (hasConfig) {
       isInitialized = true;
       configCache = config;
       persistConfigCache();
-      updateModelLabel(config.model);
+      updateModelChip(config.model);
       const p = PROVIDER_REGISTRY[config.provider];
       if (p) providerNameCache = p.name;
+      try {
+        const home = await invoke("home");
+        const cwd = await invoke("pwd");
+        updatePath(cwd.startsWith(home) ? "~" + cwd.slice(home.length) : cwd);
+      } catch (e) {
+        updatePath("~");
+      }
     } else {
-      // Dosyada yok ama cache'te var mı?
       if (configCache && configCache.apiKey) {
         isInitialized = true;
-        updateModelLabel(configCache.model);
+        updateModelChip(configCache.model);
         const p = PROVIDER_REGISTRY[configCache.provider];
         if (p) providerNameCache = p.name;
       } else {
-        // İlk kurulum � provider seçimi
         modalAllItems = Object.values(PROVIDER_REGISTRY).map((p) => ({ id: p.id, name: p.name, provider: p }));
         openModal("providers");
       }
     }
   } catch (e) {
-    // get_config hata verdi  cache varsa devam, yoksa kurulum
     if (configCache && configCache.apiKey) {
       isInitialized = true;
-      updateModelLabel(configCache.model);
+      updateModelChip(configCache.model);
       const p = PROVIDER_REGISTRY[configCache.provider];
       if (p) providerNameCache = p.name;
     } else {
@@ -1775,5 +1618,3 @@ async function init() {
 }
 
 init();
-
-

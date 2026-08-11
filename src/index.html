@@ -9,65 +9,61 @@
   </head>
   <body>
     <div class="app">
-      <!-- TITLE BAR  macOS trafik lambalar1 + dinamik dizin yolu -->
+      <!-- HEADER — trafik lambaları + klasör + model + göstergeler -->
       <header class="title-bar">
         <div class="traffic-lights">
-          <button class="traffic-light red" id="btn-close" title="Kapat">
-            <span class="icon">×</span>
-          </button>
-          <button class="traffic-light yellow" id="btn-min" title="Küçült">
-            <span class="icon">—</span>
-          </button>
-          <button class="traffic-light green" id="btn-max" title="Tam ekran">
-            <span class="icon">□</span>
-          </button>
+          <button class="traffic-light red" id="btn-close" title="Kapat"><span class="icon">×</span></button>
+          <button class="traffic-light yellow" id="btn-min" title="Küçült"><span class="icon">—</span></button>
+          <button class="traffic-light green" id="btn-max" title="Tam ekran"><span class="icon">□</span></button>
         </div>
-        <div class="title-bar-center">
+        <div class="path-wrap">
           <span class="path" id="path">~</span>
         </div>
-        <div class="title-bar-right">
-          <span class="token-label" id="token-label"></span>
-          <span class="model-label" id="model-label"></span>
-        </div>
+        <button class="model-chip" id="model-chip" title="Model seç">model</button>
+        <span class="api-count" id="api-count"></span>
       </header>
 
-      <!-- MAIN AREA  Terminal �1kt1s1 -->
+      <!-- CONTEXT ÇİZGİSİ — token doluluğu (2px) -->
+      <div class="ctx-line"><div class="ctx-fill" id="ctx-fill"></div></div>
+
+      <!-- MAIN — kart akışı -->
       <main class="main-area">
-        <div id="terminal" class="terminal"></div>
+        <div id="log" class="log"></div>
       </main>
 
-      <!-- SUGGEST PANEL  komut �nerileri (autocomplete) -->
+      <!-- BOTTOM BAR — komut input -->
+      <footer class="bottom-bar">
+        <div class="command-input-wrap">
+          <span class="command-prompt">></span>
+          <input
+            type="text"
+            class="command-input"
+            id="cmd-input"
+            autocomplete="off"
+            spellcheck="false"
+            autofocus
+          />
+        </div>
+      </footer>
+
+      <!-- SUGGEST PANEL — komut önerileri -->
       <div class="suggest-panel" id="suggest-panel" style="display: none;"></div>
 
-      <!-- MODAL  model/provider se�im penceresi -->
+      <!-- MODAL — model/provider/mod seçimi -->
       <div class="modal" id="modal" style="display: none;">
         <div class="modal-window">
           <div class="modal-search">
-            <input
-              type="text"
-              class="modal-search-input"
-              id="modal-search-input"
-              placeholder="Ara..."
-              autocomplete="off"
-              spellcheck="false"
-            />
+            <input type="text" class="modal-search-input" id="modal-search-input" placeholder="Ara..." autocomplete="off" spellcheck="false" />
           </div>
           <div class="modal-list" id="modal-list"></div>
         </div>
       </div>
 
-      <!-- API MODAL  API key giri_i -->
+      <!-- API MODAL — API key girişi -->
       <div class="modal" id="api-modal" style="display: none;">
         <div class="modal-window api-window">
           <div class="modal-api-field">
-            <input
-              type="password"
-              class="modal-search-input"
-              id="api-key-input"
-              placeholder="API Key girin ve Enter'a bas1n..."
-              autocomplete="off"
-              spellcheck="false"
-            />
+            <input type="password" class="modal-search-input" id="api-key-input" placeholder="API Key girin ve Enter'a basın..." autocomplete="off" spellcheck="false" />
           </div>
           <div class="modal-api-meta">
             <span class="modal-api-subtext" id="api-key-subtext"></span>
@@ -85,12 +81,7 @@
           </div>
           <div class="approval-detail" id="appr-detail"></div>
           <div class="approval-edit" id="appr-edit" style="display: none;">
-            <textarea
-              class="approval-edit-input"
-              id="appr-edit-input"
-              spellcheck="false"
-              rows="4"
-            ></textarea>
+            <textarea class="approval-edit-input" id="appr-edit-input" spellcheck="false" rows="4"></textarea>
           </div>
           <div class="approval-hint">
             [y] onayla · [a] oturum için · [p] her zaman · [n] reddet · [e] düzenle · [Esc] iptal
@@ -98,22 +89,7 @@
         </div>
       </div>
 
-      <!-- BOTTOM BAR  Komut input -->
-      <footer class="bottom-bar">
-        <div class="command-input-wrap">
-          <span class="command-prompt">></span>
-          <input
-            type="text"
-            class="command-input"
-            id="cmd-input"
-            autocomplete="off"
-            spellcheck="false"
-            autofocus
-          />
-        </div>
-      </footer>
-
-      <!-- ERROR OVERLAY  hata olursa ekranda g�r�n�r (arka kap1) -->
+      <!-- ERROR OVERLAY -->
       <div class="err-overlay" id="err-overlay" style="display: none;"></div>
     </div>
   </body>
