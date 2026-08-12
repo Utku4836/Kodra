@@ -19,12 +19,9 @@
         <div class="path-wrap">
           <span class="path" id="path">~</span>
         </div>
-        <button class="model-chip" id="model-chip" title="Model seç">model</button>
-        <span class="api-count" id="api-count"></span>
       </header>
 
       <!-- CONTEXT ÇİZGİSİ — token doluluğu (2px) -->
-      <div class="ctx-line"><div class="ctx-fill" id="ctx-fill"></div></div>
 
       <!-- MAIN — kart akışı -->
       <main class="main-area">
@@ -33,16 +30,29 @@
 
       <!-- BOTTOM BAR — komut input -->
       <footer class="bottom-bar">
-        <div class="command-input-wrap">
-          <span class="command-prompt">></span>
-          <input
-            type="text"
-            class="command-input"
-            id="cmd-input"
-            autocomplete="off"
-            spellcheck="false"
-            autofocus
-          />
+        <div class="command-area">
+          <div class="command-dock">
+            <div class="command-input-wrap">
+              <span class="command-prompt" aria-hidden="true">›</span>
+              <input
+                type="text"
+                class="command-input"
+                id="cmd-input"
+                placeholder="Bir komut yaz..."
+                autocomplete="off"
+                spellcheck="false"
+                autofocus
+              />
+            </div>
+          </div>
+          <div class="dock-meta">
+            <button class="model-chip" id="model-chip" title="Model seç">
+              <span class="model-name" id="model-name">model</span>
+            </button>
+            <div class="ctx-status" id="ctx-status" data-state="ready" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <span class="ctx-ring" id="ctx-fill" aria-hidden="true"></span>
+            </div>
+          </div>
         </div>
       </footer>
 

@@ -1,6 +1,13 @@
 // ===== GFM MARKDOWN MOTORU (markdown-it) =====
 import markdownit from "./vendor/markdown-it.esm.min.mjs";
 
+const mdRenderer = markdownit({
+  html: false,
+  linkify: true,
+  typographer: true,
+  breaks: true,
+});
+
 // ===== Terminal UI — main.js =====
 // FAZ 7: DOM tabanlı kart mimarisi (xterm yerine)
 
@@ -95,6 +102,7 @@ function logItem(label, opts) {
   opts = opts || {};
   const item = document.createElement("div");
   item.className = "log-item";
+  item.dataset.status = opts.status || "busy";
 
   const head = document.createElement("div");
   head.className = "log-item-head";
@@ -107,7 +115,24 @@ function logItem(label, opts) {
 
   const lbl = document.createElement("span");
   lbl.className = "log-item-label" + (opts.dim ? " dim" : "") + (opts.err ? " err" : "");
-  lbl.textContent = label;
+  if (opts.toolName) {
+    const toolName = document.createElement("span");
+    toolName.className = "log-item-tool";
+    toolName.textContent = String(opts.toolName).replace(/_/g, " ");
+    lbl.appendChild(toolName);
+    if (opts.target) {
+      const separator = document.createElement("span");
+      separator.className = "log-item-separator";
+      separator.textContent = "·";
+      const target = document.createElement("span");
+      target.className = "log-item-target";
+      target.textContent = opts.target;
+      lbl.appendChild(separator);
+      lbl.appendChild(target);
+    }
+  } else {
+    lbl.textContent = label;
+  }
 
   const time = document.createElement("span");
   time.className = "log-item-time";
@@ -138,9 +163,21 @@ function logItem(label, opts) {
   item.appendChild(body);
 
   if (!opts.noToggle) {
-    head.addEventListener("click", () => {
+    head.setAttribute("role", "button");
+    head.setAttribute("tabindex", "0");
+    head.setAttribute("aria-expanded", "false");
+
+    const toggleItem = () => {
       const isOpen = item.classList.toggle("open");
-      arrow.textContent = isOpen ? "v" : ">";
+      head.setAttribute("aria-expanded", String(isOpen));
+    };
+
+    head.addEventListener("click", toggleItem);
+    head.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        toggleItem();
+      }
     });
   } else {
     arrow.style.display = "none";
@@ -148,6 +185,15 @@ function logItem(label, opts) {
   }
 
   logEl.appendChild(item);
+  if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches && item.animate) {
+    item.animate(
+      [
+        { opacity: 0, transform: "translateY(-7px) scaleY(0.76)", filter: "blur(4px)" },
+        { opacity: 1, transform: "translateY(0) scaleY(1)", filter: "blur(0)" },
+      ],
+      { duration: 250, easing: "cubic-bezier(0.2, 0.9, 0.25, 1)" }
+    );
+  }
   autoScroll();
   return {
     item,
@@ -155,6 +201,7 @@ function logItem(label, opts) {
     lbl,
     setTime: (t) => { time.textContent = t; },
     setStatus: (s) => {
+      item.dataset.status = s;
       if (s === "ok" || s === "err") {
         status.style.display = "none"; // rozet yok ? sade ve temiz
       } else {
@@ -171,6 +218,7 @@ function logItem(label, opts) {
 
 // ===== YOL KISALTMA — home → ~ =====
 let HOME_DIR = "";
+let WORKSPACE_DIR = "";
 
 function shortPath(p) {
   const s = String(p || "");
@@ -199,10 +247,7 @@ function stripEmojis(text) {
 }
 
 function renderMd(text) {
-  let s = escapeHtml(text);
-  s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  s = s.replace(/(^|\n)\*([^*\n]+)\*/g, "$1<em>$2</em>");
-  return s;
+  return mdRenderer.render(String(text || ""));
 }
 
 // Hata kutusu — şeffaf kırmızı cam callout
@@ -231,23 +276,26 @@ document.addEventListener("mousemove", (e) => {
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 async function typeText(text, cls) {
-  const lines = String(text).split("\n");
-  for (const line of lines) {
-    const el = document.createElement("div");
-    el.className = "log-line type-anim" + (cls ? " " + cls : "");
-    logEl.appendChild(el);
-    const chunks = line.split(/(\s+)/);
-    for (const chunk of chunks) {
-      if (!chunk) continue;
-      el.textContent += chunk;
-      autoScroll();
-      await sleep(8);
-    }
-    // Yazma bitti — markdown render + emoji temizle
-    el.innerHTML = renderMd(stripEmojis(replacePaths(el.textContent)));
+  const raw = stripEmojis(replacePaths(String(text || ""))).trim();
+  if (!raw) return null;
+
+  const el = document.createElement("div");
+  el.className = "log-line rich-message type-anim is-typing" + (cls ? " " + cls : "");
+  el.setAttribute("aria-live", "polite");
+  logEl.appendChild(el);
+
+  const chunks = raw.split(/(\s+)/);
+  for (const chunk of chunks) {
+    if (!chunk) continue;
+    el.textContent += chunk;
     autoScroll();
+    await sleep(8);
   }
+
+  el.innerHTML = renderMd(raw);
+  el.classList.remove("is-typing");
   autoScroll();
+  return el;
 }
 
 // ===== PROVIDER REGISTRY =====
@@ -380,8 +428,10 @@ if (btnMax) btnMax.addEventListener("click", async () => { try { await tauriWind
 
 // ===== HEADER — model chip + path + ctx çizgisi =====
 const modelChip = document.getElementById("model-chip");
+const modelNameEl = document.getElementById("model-name");
 const pathEl = document.getElementById("path");
 const ctxFill = document.getElementById("ctx-fill");
+const ctxStatus = document.getElementById("ctx-status");
 const apiCountEl = document.getElementById("api-count");
 
 // API çağrı sayacı — oturumdaki LLM isteği sayısı
@@ -391,14 +441,18 @@ function countApiCall() {
   if (apiCountEl) apiCountEl.textContent = "API " + apiCallCount;
 }
 
+function setAgentState(state) {
+  if (ctxStatus) ctxStatus.dataset.state = state;
+}
+
 function shortModelName(model) {
   const s = String(model || "");
   return s.split("/").pop().slice(0, 24);
 }
 
 function updateModelChip(model) {
-  if (modelChip) {
-    modelChip.textContent = shortModelName(model);
+  if (modelChip && modelNameEl) {
+    modelNameEl.textContent = shortModelName(model);
     modelChip.title = model || "";
   }
 }
@@ -409,10 +463,43 @@ if (modelChip) {
 
 function updatePath(cwd) {
   if (!pathEl) return;
-  const parts = String(cwd || "").split(/[\\/]/).filter(Boolean);
-  const last = parts.length ? parts[parts.length - 1] : (cwd || "~");
-  pathEl.textContent = "~" + (parts.length > 1 ? "/" + last : "");
-  pathEl.title = cwd || "";
+  let raw = String(cwd || "~");
+  if (/^\.[\\/]?$/.test(raw) && WORKSPACE_DIR) raw = WORKSPACE_DIR;
+  const shortened = shortPath(raw).replace(/\\/g, "/");
+  const parts = shortened.split("/").filter((part) => part && part !== "~");
+  const last = parts[parts.length - 1];
+
+  if (!last) {
+    pathEl.textContent = "~";
+  } else if (shortened.startsWith("~")) {
+    pathEl.textContent = "~/" + last;
+  } else if (/^[A-Za-z]:/.test(shortened)) {
+    pathEl.textContent = last;
+  } else {
+    pathEl.textContent = "./" + last;
+  }
+
+  pathEl.title = raw;
+}
+
+const DIRECTORY_TOOLS = new Set([
+  "list_dir",
+  "search_code",
+  "analyze_codebase",
+  "create_dir",
+]);
+
+function toolWorkingPath(toolId, params) {
+  const rawPath = String(params.path || "").trim();
+  if (!rawPath) return "";
+  if (DIRECTORY_TOOLS.has(toolId)) return rawPath;
+
+  const slash = Math.max(rawPath.lastIndexOf("/"), rawPath.lastIndexOf("\\"));
+  if (slash < 0) return ".";
+  if (slash === 2 && /^[A-Za-z]:[\\/]$/.test(rawPath.slice(0, 3))) {
+    return rawPath.slice(0, 3);
+  }
+  return rawPath.slice(0, slash) || ".";
 }
 
 // ===== CONTEXT MANAGER =====
@@ -453,12 +540,16 @@ function updateCtxGauge(history, reply) {
   const total = inTok + outTok;
   const pct = Math.min(100, (total / limit) * 100);
 
-  ctxFill.style.width = pct + "%";
-  ctxFill.className = "ctx-fill" + (pct > 90 ? " high" : pct > 70 ? " mid" : "");
+  const tone = pct > 90 ? "#f87171" : pct > 70 ? "#facc15" : "#ffffff";
+  ctxFill.style.setProperty("--ctx-angle", (pct * 3.6) + "deg");
+  ctxFill.style.setProperty("--ctx-tone", tone);
+  ctxFill.classList.toggle("mid", pct > 70 && pct <= 90);
+  ctxFill.classList.toggle("high", pct > 90);
 
-  const line = document.querySelector(".ctx-line");
-  if (line) {
-    line.title = "Context: " + fmtK(total) + " / " + fmtK(limit) + " (" + pct.toFixed(1) + "%) — eşik %" + Math.round(ratio * 100);
+  if (ctxStatus) {
+    ctxStatus.title = "Context: " + fmtK(total) + " / " + fmtK(limit) + " (" + pct.toFixed(1) + "%) — eşik %" + Math.round(ratio * 100);
+    ctxStatus.setAttribute("aria-valuenow", String(Math.round(pct)));
+    ctxStatus.setAttribute("aria-label", "Context yüzde " + Math.round(pct));
   }
 }
 
@@ -534,7 +625,9 @@ function buildSystemPrompt(config, homeDir) {
     "- Respect permission prompts: if approval is required, wait; do not attempt to bypass it.\n\n" +
     "## Communication\n" +
     "- Respond in the same language the user writes in.\n" +
-    "- Be concise: short sentences, no filler. You may use markdown and emojis when they help readability.\n" +
+    "- Be concise: short sentences, no filler. Use Markdown when it improves structure.\n" +
+    "- Before tool calls, write exactly one short progress sentence. Put file paths, commands, and identifiers in `backticks`; do not add emoji or a heading because the UI supplies the step marker. After presenting a plan, do not prefix later progress updates with Step, Adım, or another repeated number.\n" +
+    "- In final answers, use short headings, lists, bold labels, inline code, and code blocks only when they materially improve readability.\n" +
     "- Plans and summaries: keep them clean and readable."
   );
 }
@@ -1269,17 +1362,14 @@ async function executeTool(toolId, params, approved) {
   const target = params.path || params.url || params.pattern || "";
 
   // Dinamik yol — header'ı son işlem dizinine güncelle
-  if (params.path) {
-    const dir = String(params.path).replace(/[\\/][^\\/]*$/, "");
-    if (dir && dir !== String(params.path)) updatePath(dir);
-  }
+  const activePath = toolWorkingPath(toolId, params);
+  if (activePath) updatePath(activePath);
 
   // AgentActionCard — [>] ile başlar, yol kısaltılır
   const shortTarget = shortPath(target);
-  const label = isCmd
-    ? "execute_command  " + cmdStr.slice(0, 60)
-    : toolId + "  " + shortTarget.slice(0, 60);
-  const item = logItem(label, { time: "", status: "run" });
+  const displayTarget = isCmd ? cmdStr.slice(0, 60) : shortTarget.slice(0, 60);
+  const label = toolId + "  " + displayTarget;
+  const item = logItem(label, { time: "", status: "run", toolName: toolId, target: displayTarget });
 
   try {
     const result = await invoke("execute_approved_tool", { config: configCache, toolId, params, approved });
@@ -1416,6 +1506,7 @@ async function processToolItem(call) {
 async function sendChat(message) {
   if (!invoke) return;
   cmdInput.disabled = true;
+  setAgentState("working");
   try {
     const config = await invoke("get_config");
     if (!config) {
@@ -1448,10 +1539,11 @@ async function sendChat(message) {
 
       const text = String(reply.text || "");
       const toolCalls = reply.tool_calls || [];
+      let progressEl = null;
 
       // Ara açıklamalar (tool çağrısı olan tur) → kart dışında sönük canlı akış
       if (text.trim() && toolCalls.length > 0) {
-        await typeText(text, "dim");
+        progressEl = await typeText(text, "ai-step");
       }
 
       // Nihai yanıt (tool yok) — üst boşlukla, normal parlaklıkta
@@ -1459,7 +1551,7 @@ async function sendChat(message) {
         const gap = document.createElement("div");
         gap.className = "final-gap";
         logEl.appendChild(gap);
-        await typeText(text, "");
+        await typeText(text, "assistant-response");
       }
 
       if (toolCalls.length === 0) {
@@ -1471,6 +1563,7 @@ async function sendChat(message) {
         const res = await processToolItem(call);
         results.push("[tool:" + call.name + "] " + (res || ""));
       }
+      if (progressEl) progressEl.classList.add("complete");
 
       history.push({
         role: "assistant",
@@ -1490,6 +1583,7 @@ async function sendChat(message) {
     renderAlert("hata: " + e);
   } finally {
     cmdInput.disabled = false;
+    setAgentState("ready");
     cmdInput.focus();
   }
 }
@@ -1589,6 +1683,7 @@ async function init() {
       try {
         const home = await invoke("home");
         const cwd = await invoke("pwd");
+        WORKSPACE_DIR = cwd;
         updatePath(cwd.startsWith(home) ? "~" + cwd.slice(home.length) : cwd);
       } catch (e) {
         updatePath("~");

@@ -1963,6 +1963,26 @@ fn read_file(path: &str) -> Result<String, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // `tauri dev` uygulamayi Cargo dizininden (`src-tauri`) baslatir.
+    // Terminalin calisma konumu ise proje koku olmali; aksi halde hem pwd
+    // hem de goreli arac yollari yaniltici bicimde src-tauri'ye baglanir.
+    if let Ok(current) = std::env::current_dir() {
+        let is_tauri_dir = current
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("src-tauri"));
+
+        if is_tauri_dir {
+            if let Some(project_root) = current.parent() {
+                if project_root.join("package.json").is_file()
+                    && project_root.join("src").is_dir()
+                {
+                    let _ = std::env::set_current_dir(project_root);
+                }
+            }
+        }
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
