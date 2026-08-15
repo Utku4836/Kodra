@@ -1933,6 +1933,14 @@ body {
   pointer-events: none;
   user-select: none;
   text-shadow: none;
+  contain: layout paint style;
+  backface-visibility: hidden;
+  transform-style: flat;
+  will-change: transform;
+}
+
+.menu-selection-chevron.is-animated {
+  transition: transform 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .menu-selection-chevron[hidden] { display: none; }

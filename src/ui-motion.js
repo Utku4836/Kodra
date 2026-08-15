@@ -239,11 +239,16 @@ export function createSelectionController(runtime, options) {
     const targetY = next.offsetTop + next.offsetHeight / 2;
     const targetTransform = `translate3d(0, ${targetY}px, 0) translateY(-50%)`;
     marker.hidden = false;
-    // Do not interpolate a text glyph across rows. Under fast key repeat the
-    // compositor can retain several rasterized chevron frames, which looks like
-    // duplicated markers. Selection remains fluid through the row highlight,
-    // while the single marker snaps deterministically to the active row.
+    const shouldAnimate = activeIndex >= 0
+      && activeIndex !== index
+      && !motionOptions.immediate
+      && !runtime.reducedMotion();
+
+    // A CSS transition naturally retargets the same compositor layer during
+    // rapid key repeat. Unlike repeatedly cancelling and recreating WAAPI
+    // effects, it cannot leave several rasterized chevron frames behind.
     runtime.cancel(marker);
+    marker.classList.toggle("is-animated", shouldAnimate);
     marker.style.opacity = "1";
     marker.style.transform = targetTransform;
     activeIndex = index;

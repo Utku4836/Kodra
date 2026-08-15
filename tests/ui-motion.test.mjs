@@ -129,13 +129,14 @@ test("secim controller mevcut chevronu korur ve yalniz eski yeni satiri degistir
   selection.moveTo(0, { immediate: true });
   selection.moveTo(2);
   assert.equal(selection.marker.textContent, "›");
+  assert.equal(selection.marker.classList.contains("is-animated"), false);
   assert.equal(rows[0].classList.contains("active"), false);
   assert.equal(rows[1].classList.contains("active"), false);
   assert.equal(rows[2].classList.contains("active"), true);
   assert.match(selection.marker.style.transform, /75px/);
 });
 
-test("yuz hizli secim girdisi kuyruk olusturmadan son hedefte biter", () => {
+test("rapid selection retargets one animated chevron without creating a queue", () => {
   const dom = new JSDOM("<div id='list'></div>");
   const container = dom.window.document.getElementById("list");
   const rows = Array.from({ length: 120 }, (_, index) => {
@@ -145,7 +146,7 @@ test("yuz hizli secim girdisi kuyruk olusturmadan son hedefte biter", () => {
     container.appendChild(row);
     return row;
   });
-  const runtime = createMotionRuntime({ reducedMotion: () => true });
+  const runtime = createMotionRuntime({ reducedMotion: () => false });
   const selection = createSelectionController(runtime, { container });
   selection.setRows(rows);
   for (let index = 0; index < 100; index += 1) selection.moveTo(index);
@@ -153,6 +154,7 @@ test("yuz hizli secim girdisi kuyruk olusturmadan son hedefte biter", () => {
   assert.equal(rows.filter((row) => row.classList.contains("active")).length, 1);
   assert.equal(rows[99].getAttribute("aria-selected"), "true");
   assert.equal(container.querySelectorAll(".menu-selection-chevron").length, 1);
+  assert.equal(selection.marker.classList.contains("is-animated"), true);
   assert.match(selection.marker.style.transform, /2985px/);
 });
 
