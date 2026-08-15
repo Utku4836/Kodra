@@ -1,11 +1,48 @@
-// ===== GFM MARKDOWN MOTORU (markdown-it) =====
-import markdownit from "./vendor/markdown-it.esm.min.mjs";
+// ===== GUVENLI MARKDOWN + RESPONSE UI V2 =====
+import { renderMarkdownInto } from "./markdown-ui.js";
+import { createResponseMotionController } from "./response-motion.js";
+import {
+  createProviderObservation,
+  diagnosticExport,
+  diagnosticStateLabel,
+  mergeDiagnosticReport,
+} from "./provider-diagnostics.js";
+import {
+  RUNTIME_PERFORMANCE_BUDGETS,
+  PUBLIC_MODEL_CACHE_KEY,
+  createFrameCoalescer,
+  modelCacheState,
+  parsePublicModelCache,
+  publicModelCatalog,
+} from "./performance-runtime.js";
+import {
+  UI_MOTION,
+  animateElementGroup,
+  createMotionRuntime,
+  createSelectionController,
+  createSelectionInputController,
+  createVisibilityController,
+  resolveMotionPreference,
+  sampleRefreshRate,
+} from "./ui-motion.js";
 
-const mdRenderer = markdownit({
-  html: false,
-  linkify: true,
-  typographer: true,
-  breaks: true,
+const SYSTEM_REDUCED_MOTION = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches || false;
+const MOTION_PREFERENCE_KEY = "cli-ui-motion-preference";
+// Kullanıcı bu uygulama için açıkça tam hareket profilini tercih etti. Değer
+// localStorage'da tutulur; ileride bir ayar yüzeyinden "system" veya "reduced"
+// profiline dönmek mümkün kalır.
+const storedMotionPreference = localStorage.getItem(MOTION_PREFERENCE_KEY);
+const motionProfile = resolveMotionPreference(SYSTEM_REDUCED_MOTION, storedMotionPreference, "full");
+const appMotionPreference = motionProfile.preference;
+if (!storedMotionPreference) localStorage.setItem(MOTION_PREFERENCE_KEY, appMotionPreference);
+const resolvedReducedMotion = motionProfile.reduced;
+document.documentElement.dataset.motionPreference = resolvedReducedMotion ? "reduced" : "full";
+document.documentElement.dataset.systemReducedMotion = String(SYSTEM_REDUCED_MOTION);
+const uiMotion = createMotionRuntime({ reducedMotion: () => resolvedReducedMotion });
+void sampleRefreshRate().then((sample) => {
+  if (!sample) return;
+  document.documentElement.dataset.refreshHz = String(sample.hz);
+  document.documentElement.style.setProperty("--measured-frame-budget", `${sample.frameBudgetMs}ms`);
 });
 
 // ===== Terminal UI — main.js =====
@@ -13,7 +50,29 @@ const mdRenderer = markdownit({
 
 // ===== Error arka kapısı =====
 const errOverlay = document.getElementById("err-overlay");
+const statusToast = document.getElementById("status-toast");
+const connectionState = document.getElementById("connection-state");
 let errTimer = null;
+let statusTimer = null;
+let statusToastGeneration = 0;
+let connectionOnline = navigator.onLine !== false;
+
+function isNetworkFailure(error) {
+  const message = String(error || "").toLowerCase();
+  return ["bağlantı hatası", "connection", "network", "internet", "dns", "offline", "çevrimdışı"]
+    .some((part) => message.includes(part));
+}
+
+function setConnectionOnline(online) {
+  const connected = Boolean(online);
+  connectionOnline = connected;
+  document.documentElement.dataset.network = connected ? "online" : "offline";
+  if (connectionState) connectionState.hidden = connected;
+}
+
+setConnectionOnline(connectionOnline);
+window.addEventListener("online", () => setConnectionOnline(true));
+window.addEventListener("offline", () => setConnectionOnline(false));
 
 function showErrorOverlay(msg) {
   if (!errOverlay) return;
@@ -23,6 +82,38 @@ function showErrorOverlay(msg) {
   errTimer = setTimeout(() => {
     errOverlay.style.display = "none";
   }, 8000);
+}
+
+async function hideStatusToast(generation) {
+  if (!statusToast || generation !== statusToastGeneration || statusToast.hidden) return;
+  const result = await uiMotion.play(statusToast, [
+    { opacity: 1, transform: "translate(-50%, 0)" },
+    { opacity: 0, transform: "translate(-50%, 3px)" },
+  ], { duration: UI_MOTION.fast, persist: true });
+  if (!result.cancelled && generation === statusToastGeneration) statusToast.hidden = true;
+}
+
+function showStatusToast(message) {
+  if (!statusToast) return;
+  const generation = ++statusToastGeneration;
+  statusToast.textContent = message;
+  statusToast.hidden = false;
+  void uiMotion.play(statusToast, [
+    { opacity: 0, transform: "translate(-50%, 4px)" },
+    { opacity: 1, transform: "translate(-50%, 0)" },
+  ], { duration: UI_MOTION.panel, persist: true });
+  clearTimeout(statusTimer);
+  statusTimer = setTimeout(() => {
+    void hideStatusToast(generation);
+  }, 3200);
+}
+
+function revealMenuContent(container, selector, options = {}) {
+  requestAnimationFrame(() => {
+    if (!container || container.style.display === "none") return;
+    const elements = [...container.querySelectorAll(selector)].filter((element) => element.getClientRects().length > 0);
+    animateElementGroup(uiMotion, elements, options);
+  });
 }
 
 window.addEventListener("error", (e) => {
@@ -53,26 +144,61 @@ document.addEventListener("keydown", (ev) => {
 const tauriCore = window.__TAURI__?.core;
 const tauriWindow = window.__TAURI__?.window;
 const invoke = tauriCore?.invoke;
+const TauriChannel = tauriCore?.Channel;
+
+const markdownActions = {
+  notify: showStatusToast,
+  openExternal: async (url) => {
+    if (!invoke) throw new Error("Baglanti acma servisi kullanilamiyor.");
+    await invoke("open_external_url", { url });
+  },
+  openPath: async (path) => {
+    if (!invoke) throw new Error("Dosya acma servisi kullanilamiyor.");
+    await invoke("reveal_local_path", { path });
+  },
+};
+
+function mountMarkdown(element, text, options = {}) {
+  return renderMarkdownInto(element, String(text || ""), {
+    ...options,
+    actions: markdownActions,
+  });
+}
 
 // ===== DOM RENDERER — kart tabanlı akış =====
 const logEl = document.getElementById("log");
 const mainArea = document.querySelector(".main-area");
+let followOutput = true;
+let logRenderTarget = logEl;
+const autoScrollScheduler = createFrameCoalescer(() => {
+  if (followOutput) mainArea.scrollTop = mainArea.scrollHeight;
+});
+
+function appendLogElement(element) {
+  logRenderTarget.appendChild(element);
+  return element;
+}
+
+if (mainArea) {
+  mainArea.addEventListener("scroll", () => {
+    followOutput = mainArea.scrollTop >= mainArea.scrollHeight - mainArea.clientHeight - 48;
+  }, { passive: true });
+}
 
 function escapeHtml(s) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 function autoScroll() {
-  if (!mainArea) return;
-  const atBottom = mainArea.scrollTop >= mainArea.scrollHeight - mainArea.clientHeight - 16;
-  if (atBottom) mainArea.scrollTop = mainArea.scrollHeight;
+  if (!mainArea || !followOutput) return;
+  autoScrollScheduler.schedule();
 }
 
 function logLine(text, cls) {
   const div = document.createElement("div");
   div.className = "log-line" + (cls ? " " + cls : "");
   div.textContent = text;
-  logEl.appendChild(div);
+  appendLogElement(div);
   autoScroll();
   return div;
 }
@@ -82,7 +208,7 @@ function userBlock(text) {
   const div = document.createElement("div");
   div.className = "user-block";
   div.textContent = text;
-  logEl.appendChild(div);
+  appendLogElement(div);
   autoScroll();
   return div;
 }
@@ -90,11 +216,104 @@ function userBlock(text) {
 // Nihai ajan yanıtı — markdown render + emoji temizle
 function assistantFinal(text) {
   const div = document.createElement("div");
-  div.className = "assistant-final";
-  div.innerHTML = renderMd(stripEmojis(replacePaths(text)));
-  logEl.appendChild(div);
+  div.className = "assistant-final rich-message";
+  mountMarkdown(div, stripEmojis(replacePaths(text)));
+  appendLogElement(div);
   autoScroll();
   return div;
+}
+
+function completedRichMessage(text, cls = "assistant-response") {
+  const raw = stripEmojis(replacePaths(String(text || ""))).trim();
+  if (!raw) return null;
+  const el = document.createElement("div");
+  el.className = "log-line rich-message " + cls;
+  mountMarkdown(el, raw);
+  appendLogElement(el);
+  autoScroll();
+  return el;
+}
+
+async function transitionToFinalMarkdown(el, text) {
+  const rendered = stripEmojis(replacePaths(text)).trim();
+  if (!el.animate) {
+    mountMarkdown(el, rendered);
+    return;
+  }
+  if (uiMotion.reducedMotion()) {
+    mountMarkdown(el, rendered);
+    const reduced = el.animate(
+      [{ opacity: 0.82 }, { opacity: 1 }],
+      { duration: 120, easing: "ease-out", fill: "both" },
+    );
+    try { await reduced.finished; } catch (_) {}
+    return;
+  }
+
+  // Streaming span'leri ile semantik Markdown DOM'u arasindaki ani degisimi
+  // iki kisa optik gecis arasinda gizle; metin hicbir zaman kaybolmaz.
+  const outgoing = el.animate(
+    [{ opacity: 1 }, { opacity: 0.76 }],
+    { duration: 72, easing: "cubic-bezier(0.4, 0, 1, 1)", fill: "forwards" },
+  );
+  try { await outgoing.finished; } catch (_) {}
+  mountMarkdown(el, rendered);
+  const incoming = el.animate(
+    [
+      { opacity: 0.76, filter: "blur(0.7px)" },
+      { opacity: 1, filter: "blur(0)" },
+    ],
+    { duration: 190, easing: "cubic-bezier(0.16, 0.82, 0.22, 1)", fill: "both" },
+  );
+  try { await incoming.finished; } catch (_) {}
+}
+
+function createTypewriterRenderer(el) {
+  let finishing = null;
+  const motion = createResponseMotionController({ element: el, onScroll: autoScroll });
+
+  return {
+    append(delta) {
+      motion.append(delta);
+    },
+    async finish(cls) {
+      if (!finishing) {
+        finishing = (async () => {
+          const result = await motion.finish();
+          await transitionToFinalMarkdown(el, result.text);
+          el.classList.remove("is-streaming", "is-typing");
+          el.classList.add(cls);
+          el.setAttribute("aria-busy", "false");
+          el.dataset.presentationMs = String(Math.round(result.metrics.presentationMs));
+          el.dataset.presentationChunks = String(result.metrics.chunks);
+          autoScroll();
+          return el;
+        })();
+      }
+      return finishing;
+    },
+    interrupt() {
+      const result = motion.interrupt();
+      mountMarkdown(el, stripEmojis(replacePaths(result.text)), { streaming: true });
+      el.classList.remove("is-streaming", "is-typing");
+      el.classList.add("interrupted-response");
+      el.setAttribute("aria-busy", "false");
+    },
+    get text() { return motion.text; },
+  };
+}
+
+async function animatedRichMessage(text, cls = "assistant-response") {
+  const raw = String(text || "");
+  if (!raw.trim()) return null;
+  const el = document.createElement("div");
+  el.className = "log-line rich-message type-anim is-typing";
+  el.setAttribute("aria-live", "polite");
+  el.setAttribute("aria-busy", "true");
+  appendLogElement(el);
+  const renderer = createTypewriterRenderer(el);
+  renderer.append(raw);
+  return renderer.finish(cls);
 }
 
 // AGENT ACTION CARD — tam şeffaf cam, akıcı açılma, ASCII semboller
@@ -184,14 +403,14 @@ function logItem(label, opts) {
     body.style.display = "none";
   }
 
-  logEl.appendChild(item);
-  if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches && item.animate) {
+  appendLogElement(item);
+  if (!uiMotion.reducedMotion() && item.animate) {
     item.animate(
       [
         { opacity: 0, transform: "translateY(-7px) scaleY(0.76)", filter: "blur(4px)" },
         { opacity: 1, transform: "translateY(0) scaleY(1)", filter: "blur(0)" },
       ],
-      { duration: 250, easing: "cubic-bezier(0.2, 0.9, 0.25, 1)" }
+      { duration: 180, easing: "cubic-bezier(0.2, 0.88, 0.25, 1)" }
     );
   }
   autoScroll();
@@ -246,88 +465,230 @@ function stripEmojis(text) {
   );
 }
 
-function renderMd(text) {
-  return mdRenderer.render(String(text || ""));
-}
-
 // Hata kutusu — şeffaf kırmızı cam callout
 function renderAlert(msg) {
   const div = document.createElement("div");
   div.className = "alert-box";
   div.textContent = msg;
-  logEl.appendChild(div);
+  appendLogElement(div);
   autoScroll();
   return div;
 }
 
-// Mouse spotlight — kartların üzerinde imleç takibi
-document.addEventListener("mousemove", (e) => {
-  const cards = document.querySelectorAll(".log-item");
-  for (const card of cards) {
-    const r = card.getBoundingClientRect();
-    if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) {
-      card.style.setProperty("--mx", e.clientX - r.left + "px");
-      card.style.setProperty("--my", e.clientY - r.top + "px");
-    }
-  }
+// Mouse spotlight — tek delegated listener, frame başına en fazla bir layout okuması/yazımı.
+let spotlightCard = null;
+let spotlightPoint = null;
+let spotlightRect = null;
+const spotlightScheduler = createFrameCoalescer(() => {
+  if (!spotlightCard || !spotlightPoint) return;
+  spotlightRect ||= spotlightCard.getBoundingClientRect();
+  spotlightCard.style.setProperty("--mx", `${spotlightPoint.x - spotlightRect.left}px`);
+  spotlightCard.style.setProperty("--my", `${spotlightPoint.y - spotlightRect.top}px`);
 });
 
-// typeText — DOM'da akıcı yazma + satır animasyonu + markdown/emoji temizliği
-function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
-
-async function typeText(text, cls) {
-  const raw = stripEmojis(replacePaths(String(text || ""))).trim();
-  if (!raw) return null;
-
-  const el = document.createElement("div");
-  el.className = "log-line rich-message type-anim is-typing" + (cls ? " " + cls : "");
-  el.setAttribute("aria-live", "polite");
-  logEl.appendChild(el);
-
-  const chunks = raw.split(/(\s+)/);
-  for (const chunk of chunks) {
-    if (!chunk) continue;
-    el.textContent += chunk;
-    autoScroll();
-    await sleep(8);
+logEl.addEventListener("pointermove", (event) => {
+  const card = event.target instanceof Element ? event.target.closest(".log-item") : null;
+  if (card !== spotlightCard) {
+    spotlightCard = card;
+    spotlightRect = null;
   }
+  spotlightPoint = card ? { x: event.clientX, y: event.clientY } : null;
+  spotlightScheduler.schedule();
+}, { passive: true });
 
-  el.innerHTML = renderMd(raw);
-  el.classList.remove("is-typing");
-  autoScroll();
-  return el;
+logEl.addEventListener("pointerleave", () => {
+  spotlightCard = null;
+  spotlightPoint = null;
+  spotlightRect = null;
+});
+
+mainArea?.addEventListener("scroll", () => { spotlightRect = null; }, { passive: true });
+window.addEventListener("resize", () => { spotlightRect = null; }, { passive: true });
+
+function createStreamRenderer() {
+  const el = document.createElement("div");
+  el.className = "log-line rich-message streaming-message is-streaming is-typing";
+  el.setAttribute("aria-live", "polite");
+  el.setAttribute("aria-busy", "true");
+  appendLogElement(el);
+  const reduceMotion = uiMotion.reducedMotion();
+  if (!reduceMotion && el.animate) {
+    el.animate(
+      [
+        { opacity: 0, transform: "translateY(5px)", filter: "blur(2px)" },
+        { opacity: 1, transform: "translateY(0)", filter: "blur(0)" },
+      ],
+      { duration: 180, easing: "cubic-bezier(0.2, 0.85, 0.25, 1)" }
+    );
+  }
+  const renderer = createTypewriterRenderer(el);
+
+  return {
+    el,
+    append(delta) {
+      renderer.append(delta);
+    },
+    async finish(kind) {
+      return renderer.finish(kind === "step" ? "ai-step" : "assistant-response");
+    },
+    interrupt() {
+      renderer.interrupt();
+    },
+    get text() { return renderer.text; },
+  };
 }
 
 // ===== PROVIDER REGISTRY =====
-const PROVIDER_REGISTRY = {
+let PROVIDER_REGISTRY = {
   nvidia: { id: "nvidia", name: "NVIDIA NIM", baseUrl: "https://integrate.api.nvidia.com/v1", defaultModel: "nvidia/llama-3.3-nemotron-super-49b-v1", requiresApiKey: true },
-  openai: { id: "openai", name: "OpenAI", baseUrl: "https://api.openai.com/v1", defaultModel: "gpt-4o", requiresApiKey: true },
-  anthropic: { id: "anthropic", name: "Anthropic", baseUrl: "https://api.anthropic.com/v1", defaultModel: "claude-3-5-sonnet-20241022", requiresApiKey: true },
+  openai: { id: "openai", name: "OpenAI", baseUrl: "https://api.openai.com/v1", defaultModel: "gpt-5.6-terra", requiresApiKey: true },
+  anthropic: { id: "anthropic", name: "Anthropic", baseUrl: "https://api.anthropic.com/v1", defaultModel: "claude-sonnet-5", requiresApiKey: true },
   gemini: { id: "gemini", name: "Google Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta", defaultModel: "gemini-3.6-flash", requiresApiKey: true },
-  groq: { id: "groq", name: "Groq", baseUrl: "https://api.groq.com/openai/v1", defaultModel: "llama-3.3-70b-versatile", requiresApiKey: true },
-  deepseek: { id: "deepseek", name: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", defaultModel: "deepseek-chat", requiresApiKey: true },
-  together: { id: "together", name: "Together AI", baseUrl: "https://api.together.xyz/v1", defaultModel: "meta-llama/Llama-3.3-70B-Instruct-Turbo", requiresApiKey: true },
-  fireworks: { id: "fireworks", name: "Fireworks AI", baseUrl: "https://api.fireworks.ai/inference/v1", defaultModel: "accounts/fireworks/models/llama-v3p3-70b-instruct", requiresApiKey: true },
-  openrouter: { id: "openrouter", name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", defaultModel: "auto", requiresApiKey: true },
-  ollama: { id: "ollama", name: "Ollama (Local)", baseUrl: "http://localhost:11434", defaultModel: "llama3.3", requiresApiKey: false },
+  groq: { id: "groq", name: "Groq", baseUrl: "https://api.groq.com/openai/v1", defaultModel: "qwen/qwen3.6-27b", requiresApiKey: true },
+  deepseek: { id: "deepseek", name: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", defaultModel: "deepseek-v4-flash", requiresApiKey: true },
+  together: { id: "together", name: "Together AI", baseUrl: "https://api.together.xyz/v1", defaultModel: "zai-org/GLM-5.1", requiresApiKey: true },
+  fireworks: { id: "fireworks", name: "Fireworks AI", baseUrl: "https://api.fireworks.ai/inference/v1", defaultModel: "accounts/fireworks/routers/kimi-k2p6-turbo", requiresApiKey: true },
+  openrouter: { id: "openrouter", name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", defaultModel: "openrouter/auto", requiresApiKey: true },
+  ollama: { id: "ollama", name: "Ollama (Local)", baseUrl: "http://localhost:11434/v1", defaultModel: "", requiresApiKey: false },
   custom: { id: "custom", name: "Custom Server", baseUrl: "", defaultModel: "", requiresApiKey: true },
 };
+
+async function hydrateProviderRegistry() {
+  if (!invoke) return;
+  try {
+    const catalog = await invoke("provider_catalog");
+    if (!Array.isArray(catalog) || catalog.length === 0) return;
+    PROVIDER_REGISTRY = Object.fromEntries(catalog.map((provider) => [provider.id, provider]));
+  } catch (e) {
+    console.warn("Provider kataloğu yüklenemedi; yerleşik katalog kullanılıyor", e);
+  }
+}
+
+const LEGACY_DEFAULT_MODELS = new Set([
+  "gpt-4o",
+  "claude-3-5-sonnet-20241022",
+  "llama-3.3-70b-versatile",
+  "deepseek-chat",
+  "deepseek-reasoner",
+  "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+  "auto",
+  "llama3.3",
+]);
+
+function upgradeProviderConfig(config) {
+  if (!config || !config.provider) return config;
+  const entries = Array.isArray(config.providers) && config.providers.length
+    ? config.providers
+    : [{
+        id: config.provider,
+        baseUrl: config.baseUrl || "",
+        model: config.model || "",
+        protocol: config.protocol,
+        authScheme: config.authScheme,
+        secretRef: config.secretRef,
+        modelsPath: config.modelsPath,
+        chatPath: config.chatPath,
+        headerNames: config.headerNames || [],
+        requestTimeoutSecs: config.requestTimeoutSecs,
+        allowLocalNetwork: Boolean(config.allowLocalNetwork),
+        contextLimit: config.contextLimit ?? null,
+        maxOutputTokens: config.maxOutputTokens ?? null,
+        inputPricePerMillion: config.inputPricePerMillion ?? null,
+        outputPricePerMillion: config.outputPricePerMillion ?? null,
+        cachedInputPricePerMillion: config.cachedInputPricePerMillion ?? null,
+      }];
+  entries.forEach((entry) => {
+    const id = entry.id || entry.provider;
+    const provider = PROVIDER_REGISTRY[id];
+    if (!provider) return;
+    entry.protocol ||= provider.protocol;
+    entry.authScheme ||= provider.authScheme;
+    if (id === "ollama" && entry.baseUrl) entry.baseUrl = entry.baseUrl.replace(/\/$/, "").replace(/\/v1$/, "") + "/v1";
+    if (LEGACY_DEFAULT_MODELS.has(entry.model) && provider.defaultModel) entry.model = provider.defaultModel;
+  });
+  const active = entries.find((entry) => (entry.id || entry.provider) === config.provider);
+  if (active && active !== config) {
+    config.baseUrl = active.baseUrl;
+    config.model = active.model;
+    config.protocol = active.protocol;
+    config.authScheme = active.authScheme;
+    config.secretRef = active.secretRef;
+    config.modelsPath = active.modelsPath;
+    config.chatPath = active.chatPath;
+    config.headerNames = active.headerNames || [];
+    config.requestTimeoutSecs = active.requestTimeoutSecs;
+    config.allowLocalNetwork = Boolean(active.allowLocalNetwork);
+    config.contextLimit = active.contextLimit ?? config.contextLimit ?? null;
+    config.maxOutputTokens = active.maxOutputTokens ?? null;
+    config.inputPricePerMillion = active.inputPricePerMillion ?? null;
+    config.outputPricePerMillion = active.outputPricePerMillion ?? null;
+    config.cachedInputPricePerMillion = active.cachedInputPricePerMillion ?? null;
+  } else {
+    const provider = PROVIDER_REGISTRY[config.provider];
+    if (provider) {
+      config.protocol ||= provider.protocol;
+      config.authScheme ||= provider.authScheme;
+      if (LEGACY_DEFAULT_MODELS.has(config.model) && provider.defaultModel) config.model = provider.defaultModel;
+    }
+  }
+  config.providers = entries;
+  return scrubSecrets(config);
+}
 
 // ===== STATE =====
 let isInitialized = false;
 let providerNameCache = null;
 let configCache = null;
 
+const SECRET_CONFIG_FIELDS = new Set([
+  "apikey",
+  "api_key",
+  "token",
+  "accesstoken",
+  "access_token",
+  "password",
+  "secret",
+  "secretvalue",
+  "headervalues",
+]);
+
+function scrubSecrets(value) {
+  if (Array.isArray(value)) return value.map(scrubSecrets);
+  if (!value || typeof value !== "object") return value;
+  const clean = {};
+  Object.entries(value).forEach(([key, child]) => {
+    if (SECRET_CONFIG_FIELDS.has(key.toLowerCase())) return;
+    clean[key] = scrubSecrets(child);
+  });
+  return clean;
+}
+
+function safeError(error) {
+  return String(error || "Bilinmeyen hata")
+    .replace(/Bearer\s+[^\s"',}\]]+/gi, "Bearer ***")
+    .replace(/([?&]key=)[^&\s"']+/gi, "$1***")
+    .replace(/(?:sk-ant-|sk-|gsk_|AIza|nvapi-)[A-Za-z0-9._-]+/g, "***");
+}
+
+function hasProviderCredential(entry, provider = null) {
+  if (!entry) return false;
+  const authScheme = entry.authScheme || (provider && provider.authScheme);
+  const hasSecretHeaders = Array.isArray(entry.headerNames) && entry.headerNames.length > 0;
+  return (authScheme === "none" && !hasSecretHeaders) || Boolean(entry.secretRef);
+}
+
 function persistConfigCache() {
-  try { localStorage.setItem("appConfig", JSON.stringify(configCache)); } catch (e) {}
+  configCache = scrubSecrets(configCache);
+  try { localStorage.removeItem("appConfig"); } catch (e) {}
 }
 
 function loadConfigCache() {
   try {
     const raw = localStorage.getItem("appConfig");
     if (raw) {
-      configCache = JSON.parse(raw);
+      configCache = scrubSecrets(JSON.parse(raw));
       if (configCache && !configCache.mode) configCache.mode = "smart";
+      localStorage.removeItem("appConfig");
     }
   } catch (e) {}
 }
@@ -337,49 +698,178 @@ const apiModal = document.getElementById("api-modal");
 const apiKeyInput = document.getElementById("api-key-input");
 const apiKeySubtext = document.getElementById("api-key-subtext");
 const apiKeyError = document.getElementById("api-key-error");
+const apiProviderTitle = document.getElementById("api-provider-title");
+const customProviderFields = document.getElementById("custom-provider-fields");
+const customBaseUrl = document.getElementById("custom-base-url");
+const customModelId = document.getElementById("custom-model-id");
+const customProtocol = document.getElementById("custom-protocol");
+const customAuthScheme = document.getElementById("custom-auth-scheme");
+const customModelsPath = document.getElementById("custom-models-path");
+const customChatPath = document.getElementById("custom-chat-path");
+const customTimeout = document.getElementById("custom-timeout");
+const customHeaders = document.getElementById("custom-headers");
+const customAllowLocal = document.getElementById("custom-allow-local");
+const apiSurface = apiModal.querySelector(".api-window");
+const apiVisibility = createVisibilityController(uiMotion, {
+  root: apiModal,
+  surface: apiSurface,
+  openDuration: UI_MOTION.fast,
+  surfaceOpenDuration: UI_MOTION.dialog,
+  closeDuration: UI_MOTION.fast,
+  surfaceCloseDuration: UI_MOTION.fast,
+});
 let apiModalProvider = null;
+
+function parseSecretHeaders(raw) {
+  return String(raw || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const separator = line.indexOf(":");
+      if (separator <= 0) throw new Error("Header biçimi 'Ad: Değer' olmalı");
+      return { name: line.slice(0, separator).trim(), value: line.slice(separator + 1).trim() };
+    });
+}
 
 function openApiModal(p) {
   apiModalProvider = p;
-  apiModal.style.display = "flex";
+  void apiVisibility.open();
   apiKeyInput.value = "";
   apiKeyError.textContent = "";
   apiKeyInput.classList.remove("error");
-  if (!p.requiresApiKey) {
+  apiProviderTitle.textContent = p.name;
+  const isCustom = p.id === "custom";
+  customProviderFields.style.display = isCustom ? "grid" : "none";
+  if (isCustom) {
+    customBaseUrl.value = p.baseUrl || "";
+    customModelId.value = p.model || p.defaultModel || "";
+    customProtocol.value = p.protocol || "openai_chat";
+    customAuthScheme.value = p.authScheme || "bearer";
+    customModelsPath.value = p.modelsPath || "";
+    customChatPath.value = p.chatPath || "";
+    customTimeout.value = String(p.requestTimeoutSecs || 45);
+    customHeaders.value = "";
+    customAllowLocal.checked = Boolean(p.allowLocalNetwork);
+    apiKeySubtext.textContent = "Sunucu ayrıntılarını girin ve Enter'a basın";
+    requestAnimationFrame(() => customBaseUrl.focus());
+  } else if (!p.requiresApiKey) {
     apiKeySubtext.textContent = "Bağlanılıyor...";
     connectProvider(p, "");
   } else {
     apiKeySubtext.textContent = p.name + " API Key";
-    apiKeyInput.focus();
+    requestAnimationFrame(() => apiKeyInput.focus());
   }
+  revealMenuContent(apiSurface, ".api-provider-title, .modal-api-field, .custom-provider-fields > *, .modal-api-meta", {
+    delay: 54,
+    stagger: 22,
+    maxItems: 10,
+  });
 }
 
 function closeApiModal() {
-  apiModal.style.display = "none";
+  apiKeyInput.value = "";
+  customHeaders.value = "";
+  void apiVisibility.close();
   apiModalProvider = null;
   cmdInput.focus();
 }
 
 async function connectProvider(provider, apiKey) {
   try {
-    const baseUrl = provider.baseUrl;
-    countApiCall(); // validate ? API limitine dahil
-    await invoke("validate_api_key", { provider: provider.id, apiKey, baseUrl });
+    const isCustom = provider.id === "custom";
+    const baseUrl = isCustom ? customBaseUrl.value.trim().replace(/\/$/, "") : provider.baseUrl;
+    const protocol = isCustom ? customProtocol.value : provider.protocol;
+    const authScheme = isCustom ? customAuthScheme.value : provider.authScheme;
+    const manualModel = isCustom ? customModelId.value.trim() : "";
+    const modelsPath = isCustom ? customModelsPath.value.trim() || null : null;
+    const chatPath = isCustom ? customChatPath.value.trim() || null : null;
+    const headers = isCustom ? parseSecretHeaders(customHeaders.value) : [];
+    const requestTimeoutSecs = isCustom ? Number(customTimeout.value || 45) : null;
+    const allowLocalNetwork = isCustom ? customAllowLocal.checked : false;
+    if (!baseUrl) throw new Error("Base URL gerekli");
+    countApiCall();
+    const connected = await invoke("connect_provider_secure", {
+      connection: {
+        provider: provider.id,
+        apiKey,
+        baseUrl,
+        model: manualModel,
+        protocol: protocol || null,
+        authScheme: authScheme || null,
+        modelsPath,
+        chatPath,
+        headers,
+        replaceHeaders: false,
+        requestTimeoutSecs,
+        allowLocalNetwork,
+      },
+    });
+    const validation = connected.validation;
+    const selectedModel = manualModel || validation.recommendedModel || provider.defaultModel;
+    if (!selectedModel) throw new Error("Kullanılabilir agent modeli bulunamadı");
 
     const prev = configCache || (await invoke("get_config")) || {};
-    const newProvider = { id: provider.id, apiKey, baseUrl, model: provider.defaultModel };
+    const newProvider = {
+      id: provider.id,
+      baseUrl,
+      model: selectedModel,
+      protocol,
+      authScheme,
+      secretRef: connected.secretRef,
+      modelsPath,
+      chatPath,
+      headerNames: connected.headerNames || [],
+      requestTimeoutSecs,
+      allowLocalNetwork,
+      contextLimit: null,
+      maxOutputTokens: null,
+      inputPricePerMillion: null,
+      outputPricePerMillion: null,
+      cachedInputPricePerMillion: null,
+    };
     const providers = Array.isArray(prev.providers) && prev.providers.length > 0
       ? prev.providers.filter((p) => (p.id || p.provider) !== provider.id)
-      : (prev.apiKey ? [{ id: prev.provider, apiKey: prev.apiKey, baseUrl: prev.baseUrl, model: prev.model }] : []);
+      : (prev.provider ? [{
+          id: prev.provider,
+          baseUrl: prev.baseUrl,
+          model: prev.model,
+          protocol: prev.protocol,
+          authScheme: prev.authScheme,
+          secretRef: prev.secretRef,
+          modelsPath: prev.modelsPath,
+          chatPath: prev.chatPath,
+          headerNames: prev.headerNames || [],
+          requestTimeoutSecs: prev.requestTimeoutSecs,
+          allowLocalNetwork: Boolean(prev.allowLocalNetwork),
+          contextLimit: prev.contextLimit ?? null,
+          maxOutputTokens: prev.maxOutputTokens ?? null,
+          inputPricePerMillion: prev.inputPricePerMillion ?? null,
+          outputPricePerMillion: prev.outputPricePerMillion ?? null,
+          cachedInputPricePerMillion: prev.cachedInputPricePerMillion ?? null,
+        }] : []);
     providers.push(newProvider);
 
     configCache = {
       provider: provider.id,
-      apiKey,
       baseUrl,
-      model: provider.defaultModel,
+      model: selectedModel,
+      protocol,
+      authScheme,
+      secretRef: connected.secretRef,
+      modelsPath,
+      chatPath,
+      headerNames: connected.headerNames || [],
+      requestTimeoutSecs,
+      allowLocalNetwork,
       mode: prev.mode || "smart",
       allowList: prev.allowList || [],
+      contextLimit: null,
+      contextRatio: prev.contextRatio || null,
+      maxOutputTokens: null,
+      inputPricePerMillion: null,
+      outputPricePerMillion: null,
+      cachedInputPricePerMillion: null,
       providers,
     };
     await invoke("save_config", { config: configCache });
@@ -391,9 +881,12 @@ async function connectProvider(provider, apiKey) {
     openModelMenu();
   } catch (e) {
     apiKeyInput.classList.add("error");
-    apiKeyError.textContent = "Geçersiz API Key — " + e;
+    apiKeyError.textContent = "Bağlantı kurulamadı — " + safeError(e);
     apiKeySubtext.textContent = "";
     setTimeout(() => apiKeyInput.classList.remove("error"), 1500);
+  } finally {
+    apiKeyInput.value = "";
+    customHeaders.value = "";
   }
 }
 
@@ -403,7 +896,10 @@ document.addEventListener("keydown", (ev) => {
     ev.preventDefault();
     if (!apiModalProvider) return;
     const key = apiKeyInput.value.trim();
-    if (!key && apiModalProvider.requiresApiKey) {
+    const keyRequired = apiModalProvider.id === "custom"
+      ? customAuthScheme.value !== "none"
+      : apiModalProvider.requiresApiKey;
+    if (!key && keyRequired) {
       apiKeyInput.classList.add("error");
       apiKeyError.textContent = "Geçersiz API Key";
       setTimeout(() => apiKeyInput.classList.remove("error"), 1500);
@@ -446,13 +942,26 @@ function setAgentState(state) {
 }
 
 function shortModelName(model) {
-  const s = String(model || "");
-  return s.split("/").pop().slice(0, 24);
+  const id = String(model || "").split("/").pop();
+  const acronyms = new Map([
+    ["gpt", "GPT"], ["glm", "GLM"], ["llama", "Llama"], ["qwen", "Qwen"],
+    ["gemini", "Gemini"], ["claude", "Claude"], ["mistral", "Mistral"],
+    ["mini", "Mini"], ["nano", "Nano"], ["pro", "Pro"], ["flash", "Flash"],
+    ["lite", "Lite"], ["sonnet", "Sonnet"], ["opus", "Opus"], ["haiku", "Haiku"],
+    ["instruct", "Instruct"], ["thinking", "Thinking"], ["preview", "Preview"],
+  ]);
+  return id.split(/[-_]+/).filter(Boolean).map((part) => {
+    const lower = part.toLowerCase();
+    if (acronyms.has(lower)) return acronyms.get(lower);
+    if (/^r\d+$/i.test(part)) return part.toUpperCase();
+    if (/^\d+(?:\.\d+)?b$/i.test(part)) return part.toUpperCase();
+    return part.charAt(0).toUpperCase() + part.slice(1);
+  }).join(" ").slice(0, 34);
 }
 
-function updateModelChip(model) {
+function updateModelChip(model, displayName = "") {
   if (modelChip && modelNameEl) {
-    modelNameEl.textContent = shortModelName(model);
+    modelNameEl.textContent = displayName || shortModelName(model);
     modelChip.title = model || "";
   }
 }
@@ -513,14 +1022,29 @@ function contextRatioOf(config) {
   return !isNaN(r) && r > 0 && r <= 1 ? r : 0.8;
 }
 
+function outputReserveOf(config) {
+  const limit = contextLimitOf(config);
+  const configured = Number(config?.maxOutputTokens || 0);
+  const reserve = configured > 0 ? configured : 8192;
+  return Math.min(Math.floor(limit * 0.25), Math.max(2048, reserve));
+}
+
+function usableContextLimit(config) {
+  return Math.max(4096, contextLimitOf(config) - outputReserveOf(config));
+}
+
 function compactThresholdFor(config) {
-  return Math.floor(contextLimitOf(config) * contextRatioOf(config));
+  return Math.floor(usableContextLimit(config) * contextRatioOf(config));
 }
 
 function estimateTokens(history) {
   let total = 0;
   for (const m of history) {
+    total += 4;
     total += Math.ceil(String(m.content || "").length / 4);
+    if (m.toolCalls) total += Math.ceil(JSON.stringify(m.toolCalls).length / 4);
+    if (m.toolCallId) total += Math.ceil(String(m.toolCallId).length / 4);
+    if (m.reasoningContent) total += Math.ceil(String(m.reasoningContent).length / 4);
   }
   return total;
 }
@@ -530,14 +1054,146 @@ function fmtK(n) {
 }
 
 // Context çizgisi + tooltip
-function updateCtxGauge(history, reply) {
+function defaultSessionUsage() {
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    cachedTokens: 0,
+    totalTokens: 0,
+    currentContextTokens: 0,
+    apiCalls: 0,
+    source: "",
+    costUsd: null,
+    rateLimits: null,
+    lastRequest: null,
+  };
+}
+
+function defaultCompactionState() {
+  return {
+    autoEnabled: true,
+    threshold: 0.8,
+    summary: "",
+    compactedThrough: 0,
+    count: 0,
+    lastAt: null,
+    lastMode: null,
+    tokensBefore: 0,
+    tokensAfter: 0,
+    tokensSaved: 0,
+  };
+}
+
+function normalizeSessionIntelligence(record) {
+  if (!record) return record;
+  record.usage = { ...defaultSessionUsage(), ...(record.usage || {}) };
+  record.compaction = { ...defaultCompactionState(), ...(record.compaction || {}) };
+  record.compaction.autoEnabled = record.compaction.autoEnabled !== false;
+  const threshold = Number(record.compaction.threshold);
+  record.compaction.threshold = threshold >= 0.5 && threshold <= 0.95 ? threshold : 0.8;
+  return record;
+}
+
+function effectiveConversationHistory() {
+  const state = currentSession?.compaction;
+  if (!state?.summary || !Number.isInteger(state.compactedThrough) || state.compactedThrough <= 0) {
+    return conversationHistory.slice();
+  }
+  return [
+    {
+      role: "system",
+      content: "## Sıkıştırılmış oturum hafızası\nBu özet eski konuşma turlarının doğrulanmış devam bağlamıdır.\n\n" + state.summary,
+    },
+    ...conversationHistory.slice(state.compactedThrough),
+  ];
+}
+
+function effectiveRequestHistory(config, homeDir) {
+  return [
+    { role: "system", content: buildSystemPrompt(config, homeDir) },
+    ...effectiveConversationHistory(),
+  ];
+}
+
+function turnCostUsd(usage, config) {
+  if (config?.inputPricePerMillion === null || config?.inputPricePerMillion === undefined
+      || config?.outputPricePerMillion === null || config?.outputPricePerMillion === undefined) {
+    return null;
+  }
+  const inputPrice = Number(config?.inputPricePerMillion);
+  const outputPrice = Number(config?.outputPricePerMillion);
+  const hasCachedPrice = config?.cachedInputPricePerMillion !== null
+    && config?.cachedInputPricePerMillion !== undefined;
+  const cachedPriceValue = Number(config?.cachedInputPricePerMillion);
+  if (!Number.isFinite(inputPrice) || !Number.isFinite(outputPrice)) return null;
+  const input = Number(usage.inputTokens || 0);
+  const output = Number(usage.outputTokens || 0);
+  const cached = Math.min(input, Number(usage.cachedTokens || 0));
+  const uncached = Math.max(0, input - cached);
+  const cachedPrice = hasCachedPrice && Number.isFinite(cachedPriceValue) ? cachedPriceValue : inputPrice;
+  return ((uncached * inputPrice) + (cached * cachedPrice) + (output * outputPrice)) / 1_000_000;
+}
+
+function recordReplyUsage(reply, history, { updateContext = true } = {}) {
+  if (!currentSession) return;
+  normalizeSessionIntelligence(currentSession);
+  const totals = currentSession.usage;
+  const providerUsage = reply?.usage || {};
+  const reported = [
+    providerUsage.inputTokens,
+    providerUsage.outputTokens,
+    providerUsage.reasoningTokens,
+    providerUsage.cachedTokens,
+    providerUsage.totalTokens,
+  ].some((value) => Number(value) > 0);
+  const usage = reported
+    ? {
+        inputTokens: Number(providerUsage.inputTokens || 0),
+        outputTokens: Number(providerUsage.outputTokens || 0),
+        reasoningTokens: Number(providerUsage.reasoningTokens || 0),
+        cachedTokens: Number(providerUsage.cachedTokens || 0),
+        totalTokens: Number(providerUsage.totalTokens || 0),
+      }
+    : {
+        inputTokens: estimateTokens(history || []),
+        outputTokens: Math.ceil(String(reply?.text || "").length / 4),
+        reasoningTokens: Math.ceil(String(reply?.reasoning || "").length / 4),
+        cachedTokens: 0,
+        totalTokens: 0,
+      };
+  if (!usage.totalTokens) {
+    usage.totalTokens = usage.inputTokens + usage.outputTokens + usage.reasoningTokens;
+  }
+  totals.inputTokens += usage.inputTokens;
+  totals.outputTokens += usage.outputTokens;
+  totals.reasoningTokens += usage.reasoningTokens;
+  totals.cachedTokens += usage.cachedTokens;
+  totals.totalTokens += usage.totalTokens;
+  totals.apiCalls += 1;
+  totals.source = totals.source && totals.source !== (reported ? "provider" : "estimated")
+    ? "mixed"
+    : (reported ? "provider" : "estimated");
+  if (updateContext) totals.currentContextTokens = usage.totalTokens;
+  if (reply?.rate_limits) totals.rateLimits = reply.rate_limits;
+  const cost = turnCostUsd(usage, configCache);
+  if (cost !== null) totals.costUsd = Number(totals.costUsd || 0) + cost;
+}
+
+function currentContextTokens(history = null) {
+  const measured = Number(currentSession?.usage?.currentContextTokens || 0);
+  return measured > 0 ? measured : estimateTokens(history || effectiveConversationHistory());
+}
+
+function updateCtxGauge(history = null, reply = null) {
   if (!ctxFill) return;
   const config = configCache;
   const limit = contextLimitOf(config);
   const ratio = contextRatioOf(config);
-  const inTok = estimateTokens(history);
-  const outTok = reply ? Math.ceil(String(reply.text || "").length / 4) : 0;
-  const total = inTok + outTok;
+  const measuredTotal = Number(reply?.usage?.totalTokens || 0);
+  const total = measuredTotal > 0
+    ? measuredTotal
+    : currentContextTokens(history || effectiveConversationHistory());
   const pct = Math.min(100, (total / limit) * 100);
 
   const tone = pct > 90 ? "#f87171" : pct > 70 ? "#facc15" : "#ffffff";
@@ -547,27 +1203,11 @@ function updateCtxGauge(history, reply) {
   ctxFill.classList.toggle("high", pct > 90);
 
   if (ctxStatus) {
-    ctxStatus.title = "Context: " + fmtK(total) + " / " + fmtK(limit) + " (" + pct.toFixed(1) + "%) — eşik %" + Math.round(ratio * 100);
+    const source = currentSession?.usage?.source || (measuredTotal > 0 ? "provider" : "estimated");
+    ctxStatus.title = "Context: " + fmtK(total) + " / " + fmtK(limit) + " (" + pct.toFixed(1) + "%) — " + source + " · compact %" + Math.round(ratio * 100);
     ctxStatus.setAttribute("aria-valuenow", String(Math.round(pct)));
     ctxStatus.setAttribute("aria-label", "Context yüzde " + Math.round(pct));
   }
-}
-
-function compactHistory(history) {
-  if (!history || history.length <= 2) return history;
-  const compacted = [history[0]];
-  if (history[1]) compacted.push(history[1]);
-  for (let i = 2; i < history.length; i++) {
-    const m = history[i];
-    if (m.role === "assistant") {
-      compacted.push({ role: "assistant", content: String(m.content || "").slice(0, 500), toolCalls: m.toolCalls });
-    } else if (m.role === "tool") {
-      compacted.push({ role: "tool", toolCallId: m.toolCallId, content: String(m.content || "").slice(0, 200) });
-    } else {
-      compacted.push(m);
-    }
-  }
-  return compacted;
 }
 
 // ===== SYSTEM PROMPT =====
@@ -634,70 +1274,234 @@ function buildSystemPrompt(config, homeDir) {
 
 // ===== SUGGEST PANEL =====
 const suggestPanel = document.getElementById("suggest-panel");
-const COMMANDS = ["/model", "/provider", "/permissions", "/context", "/undo", "/clear"];
+const COMMANDS = ["/model", "/provider", "/diagnostics", "/permissions", "/status", "/compact", "/sessions", "/resume", "/delete-session", "/new", "/undo", "/clear"];
 let suggestMode = null;
 let suggestItems = [];
 let suggestIndex = 0;
+let suggestRows = [];
+let suggestGeneration = 0;
+let pendingSuggestActive = null;
+const suggestVisibility = createVisibilityController(uiMotion, {
+  root: suggestPanel,
+  surface: suggestPanel,
+  display: "block",
+  openDuration: UI_MOTION.panel,
+  closeDuration: UI_MOTION.fast,
+  rootOpenFrom: { opacity: 0, transform: "translate(-50%, 12px) scale(0.975)" },
+  rootOpenTo: { opacity: 1, transform: "translate(-50%, 0) scale(1)" },
+  rootCloseTo: { opacity: 0, transform: "translate(-50%, 6px) scale(0.985)" },
+});
+const suggestSelection = createSelectionController(uiMotion, {
+  container: suggestPanel,
+  markerClass: "menu-selection-chevron suggest-selection-chevron",
+});
+const suggestInputOwner = createSelectionInputController(suggestPanel);
+const suggestScrollScheduler = createFrameCoalescer(() => {
+  const active = pendingSuggestActive;
+  if (!active || !suggestPanel.clientHeight) return;
+  const top = active.offsetTop;
+  const bottom = top + active.offsetHeight;
+  if (top < suggestPanel.scrollTop) suggestPanel.scrollTop = top;
+  else if (bottom > suggestPanel.scrollTop + suggestPanel.clientHeight) {
+    suggestPanel.scrollTop = bottom - suggestPanel.clientHeight;
+  }
+});
 
 function showSuggest(items, mode) {
+  const generation = ++suggestGeneration;
   suggestMode = mode;
   suggestItems = items;
   suggestIndex = 0;
+  suggestPanel.scrollTop = 0;
   suggestPanel.innerHTML = "";
+  suggestPanel.setAttribute("role", "listbox");
+  suggestRows = [];
+  suggestInputOwner.claimKeyboard();
   items.forEach((it, i) => {
     const el = document.createElement("div");
-    el.className = "suggest-item" + (i === 0 ? " active" : "");
+    el.className = "suggest-item";
     el.textContent = typeof it === "string" ? it : (it.name || it.id);
+    el.setAttribute("role", "option");
+    el.setAttribute("aria-selected", "false");
+    el.addEventListener("mouseenter", () => {
+      if (!suggestInputOwner.acceptsPointer()) return;
+      suggestIndex = i;
+      updateActiveItem();
+    });
+    el.addEventListener("click", () => {
+      suggestInputOwner.claimPointer();
+      suggestIndex = i;
+      void applySuggest(suggestIndex);
+    });
     suggestPanel.appendChild(el);
+    suggestRows.push(el);
   });
-  suggestPanel.style.display = "block";
+  suggestSelection.setRows(suggestRows);
+  suggestSelection.moveTo(0, { immediate: true });
+  void suggestVisibility.open().then(() => {
+    if (generation === suggestGeneration) suggestPanel.dataset.motionReady = "true";
+  });
 }
 
 function updateActiveItem() {
-  const items = suggestPanel.querySelectorAll(".suggest-item");
-  items.forEach((el, i) => el.classList.toggle("active", i === suggestIndex));
+  const active = suggestSelection.moveTo(suggestIndex);
+  if (!active) return;
+  pendingSuggestActive = active;
+  suggestScrollScheduler.schedule();
+}
+
+function moveSuggestSelection(key) {
+  if (!suggestItems.length) return false;
+  const visibleRows = Math.max(1, Math.floor(suggestPanel.clientHeight / (suggestRows[0]?.offsetHeight || 34)) - 1);
+  if (key === "ArrowDown") suggestIndex = (suggestIndex + 1) % suggestItems.length;
+  else if (key === "ArrowUp") suggestIndex = (suggestIndex - 1 + suggestItems.length) % suggestItems.length;
+  else if (key === "Home") suggestIndex = 0;
+  else if (key === "End") suggestIndex = suggestItems.length - 1;
+  else if (key === "PageDown") suggestIndex = Math.min(suggestItems.length - 1, suggestIndex + visibleRows);
+  else if (key === "PageUp") suggestIndex = Math.max(0, suggestIndex - visibleRows);
+  else return false;
+  suggestInputOwner.claimKeyboard();
+  updateActiveItem();
+  return true;
 }
 
 function hideSuggest() {
-  suggestPanel.style.display = "none";
-  suggestPanel.innerHTML = "";
+  const generation = ++suggestGeneration;
   suggestItems = [];
   suggestIndex = 0;
   suggestMode = null;
+  void suggestVisibility.close().then(() => {
+    if (generation !== suggestGeneration || suggestMode !== null) return;
+    suggestSelection.reset();
+    suggestPanel.innerHTML = "";
+    suggestRows = [];
+    pendingSuggestActive = null;
+    delete suggestPanel.dataset.motionReady;
+  });
 }
 
 // ===== MODAL (model/provider/mod) =====
 const modal = document.getElementById("modal");
 const modalSearchInput = document.getElementById("modal-search-input");
 const modalList = document.getElementById("modal-list");
+const sessionDeleteModal = document.getElementById("session-delete-modal");
+const sessionDeleteDescription = document.getElementById("session-delete-description");
+const sessionDeleteCancel = document.getElementById("session-delete-cancel");
+const sessionDeleteConfirm = document.getElementById("session-delete-confirm");
+const sessionDeleteVisibility = createVisibilityController(uiMotion, {
+  root: sessionDeleteModal,
+  surface: sessionDeleteModal.querySelector(".confirm-window"),
+  openDuration: UI_MOTION.fast,
+  surfaceOpenDuration: UI_MOTION.dialog,
+  closeDuration: UI_MOTION.fast,
+  surfaceCloseDuration: UI_MOTION.fast,
+});
 let modalMode = null;
 let modalAllItems = [];
 let modalItems = [];
 let modalIndex = 0;
-let modelCache = null;
+let modelCache = readPersistentModelCache();
+let modelFetchPromise = null;
+let pendingSessionDelete = null;
+let deleteReturnFocus = null;
+let modalCloseGeneration = 0;
+const providerDiagnosticCache = new Map();
+const MODEL_CACHE_TTL_MS = RUNTIME_PERFORMANCE_BUDGETS.modelCacheFreshMs;
+const MODEL_CACHE_STALE_MS = RUNTIME_PERFORMANCE_BUDGETS.modelCacheStaleMs;
+
+function readPersistentModelCache() {
+  try { return parsePublicModelCache(localStorage.getItem(PUBLIC_MODEL_CACHE_KEY)); }
+  catch (_) { return null; }
+}
+
+function persistPublicModelCache(cache) {
+  if (!cache?.items?.length) return;
+  try {
+    localStorage.setItem(PUBLIC_MODEL_CACHE_KEY, JSON.stringify({
+      items: publicModelCatalog(cache.items),
+      expiresAt: cache.expiresAt,
+      staleUntil: cache.staleUntil,
+    }));
+  } catch (_) {}
+}
+const modalSurface = modal.querySelector(".modal-window");
+const modalVisibility = createVisibilityController(uiMotion, {
+  root: modal,
+  surface: modalSurface,
+  openDuration: UI_MOTION.fast,
+  surfaceOpenDuration: UI_MOTION.panel,
+  closeDuration: UI_MOTION.fast,
+  surfaceCloseDuration: UI_MOTION.fast,
+});
+const modalSelection = createSelectionController(uiMotion, {
+  container: modalList,
+  markerClass: "menu-selection-chevron modal-selection-chevron",
+});
+const modalInputOwner = createSelectionInputController(modalList);
+let pendingModalActive = null;
+const modalScrollScheduler = createFrameCoalescer(() => {
+  const active = pendingModalActive;
+  if (!active || !modalList.clientHeight) return;
+  const top = active.offsetTop;
+  const bottom = top + active.offsetHeight;
+  if (top < modalList.scrollTop) modalList.scrollTop = top;
+  else if (bottom > modalList.scrollTop + modalList.clientHeight) {
+    modalList.scrollTop = bottom - modalList.clientHeight;
+  }
+});
+
+function formatTokenCapacity(value) {
+  if (!Number.isFinite(value) || value <= 0) return "";
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value % 1_000_000 ? 1 : 0)}m ctx`;
+  if (value >= 1_000) return `${Math.round(value / 1_000)}k ctx`;
+  return `${value} ctx`;
+}
+
+function renderModelItem(model) {
+  const el = document.createElement("div");
+  el.className = "modal-item model-item";
+  const name = document.createElement("span");
+  name.className = "model-name";
+  name.textContent = model.displayName || shortModelName(model.id);
+  el.appendChild(name);
+  el.title = model.id;
+  el.setAttribute("aria-label", `${name.textContent}, ${model.providerName || "model"}`);
+  return el;
+}
 
 function openModal(mode) {
+  modalCloseGeneration++;
   modalMode = mode;
-  modal.style.display = "flex";
+  modal.dataset.mode = mode;
+  void modalVisibility.open();
   modalSearchInput.value = "";
+  modalInputOwner.claimKeyboard();
   renderModalList(modalAllItems);
-  modalSearchInput.focus();
+  revealMenuContent(modalSurface, ".modal-search", { delay: 42, distance: 7, maxItems: 1 });
+  modalSearchInput.focus({ preventScroll: true });
+  requestAnimationFrame(() => modalSearchInput.focus());
   updateModalActive();
 }
 
 function closeModal() {
-  modal.style.display = "none";
+  const generation = ++modalCloseGeneration;
   modalMode = null;
   modalItems = [];
   modalIndex = 0;
+  void modalVisibility.close().then(() => {
+    if (generation === modalCloseGeneration && modalMode === null) {
+      modalSelection.reset();
+      delete modal.dataset.mode;
+    }
+  });
   cmdInput.focus();
 }
 
 function renderModalList(items) {
+  modalList.scrollTop = 0;
   modalList.innerHTML = "";
   modalItems = [];
   modalIndex = 0;
-
   if (modalMode === "models") {
     const groups = {};
     items.forEach((it) => {
@@ -705,18 +1509,54 @@ function renderModalList(items) {
       if (!groups[key]) groups[key] = [];
       groups[key].push(it);
     });
-    Object.keys(groups).forEach((g) => {
+    Object.keys(groups).sort((a, b) => a.localeCompare(b)).forEach((g) => {
       const header = document.createElement("div");
       header.className = "modal-category";
-      header.textContent = g;
+      header.textContent = `${g}  ${groups[g].length}`;
       modalList.appendChild(header);
-      groups[g].forEach((it) => {
-        const el = document.createElement("div");
-        el.className = "modal-item";
-        el.textContent = it.id;
+      groups[g].slice(0, 80).forEach((it) => {
+        const el = renderModelItem(it);
         modalList.appendChild(el);
         modalItems.push({ el, item: it });
       });
+    });
+  } else if (modalMode === "diagnostics-providers") {
+    const header = document.createElement("div");
+    header.className = "modal-category";
+    header.textContent = "Tanılanacak provider";
+    modalList.appendChild(header);
+    items.forEach((it) => {
+      const el = document.createElement("div");
+      el.className = "modal-item provider-item";
+      const title = document.createElement("span");
+      title.className = "provider-item-name";
+      title.textContent = it.name;
+      const meta = document.createElement("span");
+      meta.className = "provider-item-state";
+      const report = providerDiagnosticCache.get(it.id);
+      meta.dataset.state = report?.overall || "unknown";
+      meta.textContent = report ? diagnosticStateLabel(report.overall) : "Henüz kontrol edilmedi";
+      el.append(title, meta);
+      modalList.appendChild(el);
+      modalItems.push({ el, item: it });
+    });
+  } else if (modalMode === "sessions" || modalMode === "delete-sessions") {
+    const header = document.createElement("div");
+    header.className = "modal-category";
+    header.textContent = modalMode === "delete-sessions" ? "Bir konuşma seç" : "Konuşmalar";
+    modalList.appendChild(header);
+    items.forEach((it) => {
+      const el = document.createElement("div");
+      el.className = "modal-item session-item";
+      const title = document.createElement("span");
+      title.className = "session-title";
+      title.textContent = it.title;
+      const meta = document.createElement("span");
+      meta.className = "session-meta";
+      meta.textContent = shortModelName(it.model) + " · " + it.messageCount + (it.hasDraft ? " · yarım" : "");
+      el.append(title, meta);
+      modalList.appendChild(el);
+      modalItems.push({ el, item: it });
     });
   } else if (modalMode === "mode") {
     const header = document.createElement("div");
@@ -738,53 +1578,126 @@ function renderModalList(items) {
     let connectedIdx = 0;
     const linked = (configCache && configCache.providers && configCache.providers.length > 0)
       ? configCache.providers.map((p) => p.id || p.provider)
-      : (configCache && configCache.apiKey ? [configCache.provider] : []);
+      : (configCache && hasProviderCredential(configCache, PROVIDER_REGISTRY[configCache.provider]) ? [configCache.provider] : []);
     items.forEach((it, i) => {
       const el = document.createElement("div");
-      el.className = "modal-item";
+      el.className = "modal-item provider-item";
       const isConnected = linked.includes(it.id);
       const isActive = configCache && configCache.provider === it.id;
-      el.textContent = it.name + (isActive ? "  ✓" : isConnected ? "  ·" : "");
+      const label = document.createElement("span");
+      label.className = "provider-item-name";
+      label.textContent = it.name;
+      const indicator = document.createElement("span");
+      indicator.className = "provider-health-indicator";
+      const report = providerDiagnosticCache.get(it.id);
+      indicator.dataset.state = report?.overall || (isConnected ? "connected" : "unlinked");
+      indicator.setAttribute("aria-label", report
+        ? diagnosticStateLabel(report.overall)
+        : isConnected ? "Bağlı" : "Bağlı değil");
+      if (isActive) indicator.classList.add("is-active");
+      el.append(label, indicator);
       if (isActive) connectedIdx = i;
       modalList.appendChild(el);
       modalItems.push({ el, item: it });
     });
     if (configCache) modalIndex = connectedIdx;
   }
+
+  modalList.setAttribute("role", "listbox");
+  modalItems.forEach((row, index) => {
+    row.el.setAttribute("role", "option");
+    row.el.addEventListener("mouseenter", () => {
+      if (!modalInputOwner.acceptsPointer()) return;
+      modalIndex = index;
+      updateModalActive();
+    });
+    row.el.addEventListener("click", () => {
+      modalInputOwner.claimPointer();
+      modalIndex = index;
+      void selectModalItem();
+    });
+  });
+  const rows = modalItems.map((row) => row.el);
+  modalSelection.setRows(rows);
+  if (rows.length) modalSelection.moveTo(modalIndex, { immediate: true });
 }
 
 function updateModalActive() {
-  modalItems.forEach((row, i) => row.el.classList.toggle("active", i === modalIndex));
-  const active = modalItems[modalIndex];
-  if (active) {
-    const list = modalList;
-    const top = active.el.offsetTop - list.offsetTop;
-    const bottom = top + active.el.offsetHeight;
-    if (top < list.scrollTop) list.scrollTop = top;
-    else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight;
-  }
+  const active = modalSelection.moveTo(modalIndex);
+  if (!active) return;
+  pendingModalActive = active;
+  modalScrollScheduler.schedule();
+}
+
+function moveModalSelection(key) {
+  if (!modalItems.length) return false;
+  const visibleRows = Math.max(1, Math.floor(modalList.clientHeight / (modalItems[0]?.el.offsetHeight || 38)) - 1);
+  if (key === "ArrowDown") modalIndex = (modalIndex + 1) % modalItems.length;
+  else if (key === "ArrowUp") modalIndex = (modalIndex - 1 + modalItems.length) % modalItems.length;
+  else if (key === "Home") modalIndex = 0;
+  else if (key === "End") modalIndex = modalItems.length - 1;
+  else if (key === "PageDown") modalIndex = Math.min(modalItems.length - 1, modalIndex + visibleRows);
+  else if (key === "PageUp") modalIndex = Math.max(0, modalIndex - visibleRows);
+  else return false;
+  modalInputOwner.claimKeyboard();
+  updateModalActive();
+  return true;
+}
+
+function renderFilteredModal(items) {
+  renderModalList(items);
+  updateModalActive();
+  void uiMotion.play(modalList, [
+    { opacity: 0.82, transform: "translateY(1px)" },
+    { opacity: 1, transform: "translateY(0)" },
+  ], { duration: UI_MOTION.instant });
+}
+
+function transitionModalContent(mode, items, direction = 1) {
+  modalCloseGeneration++;
+  modalMode = mode;
+  modal.dataset.mode = mode;
+  modalSearchInput.value = "";
+  modalInputOwner.claimKeyboard();
+  renderModalList(items);
+  updateModalActive();
+  void uiMotion.play(modalList, [
+    { opacity: 0.7, transform: `translateX(${direction * 6}px)` },
+    { opacity: 1, transform: "translateX(0)" },
+  ], { duration: UI_MOTION.fast });
+  requestAnimationFrame(() => modalSearchInput.focus());
 }
 
 function filterModal() {
   const q = modalSearchInput.value.toLowerCase();
   if (!q) {
-    renderModalList(modalAllItems);
-    updateModalActive();
+    renderFilteredModal(modalAllItems);
     return;
   }
   if (modalMode === "models") {
-    const filtered = modalAllItems.filter((it) => it.id.toLowerCase().includes(q) || (it.providerName || "").toLowerCase().includes(q));
-    renderModalList(filtered);
+    const filtered = modalAllItems.filter((it) =>
+      it.id.toLowerCase().includes(q)
+      || (it.displayName || "").toLowerCase().includes(q)
+      || (it.providerName || "").toLowerCase().includes(q)
+    );
+    renderFilteredModal(filtered);
+  } else if (modalMode === "sessions" || modalMode === "delete-sessions") {
+    const filtered = modalAllItems.filter((it) =>
+      it.title.toLowerCase().includes(q) || it.model.toLowerCase().includes(q)
+    );
+    renderFilteredModal(filtered);
+  } else if (modalMode === "diagnostics-providers") {
+    const filtered = modalAllItems.filter((it) => it.name.toLowerCase().includes(q));
+    renderFilteredModal(filtered);
   } else if (modalMode === "mode") {
     const filtered = modalAllItems.filter((it) => it.name.toLowerCase().includes(q));
-    renderModalList(filtered);
+    renderFilteredModal(filtered);
   } else {
     const filtered = Object.values(PROVIDER_REGISTRY)
       .filter((p) => p.name.toLowerCase().includes(q))
       .map((p) => ({ id: p.id, name: p.name, provider: p }));
-    renderModalList(filtered);
+    renderFilteredModal(filtered);
   }
-  updateModalActive();
 }
 
 async function selectModalItem() {
@@ -792,8 +1705,20 @@ async function selectModalItem() {
   if (!row) return;
 
   if (modalMode === "models") {
-    await selectModel(row.item.providerId, row.item.id);
+    await selectModel(row.item.providerId, row.item.id, row.item.displayName);
     closeModal();
+  } else if (modalMode === "sessions") {
+    const id = row.item.id;
+    closeModal();
+    await resumeSession(id);
+  } else if (modalMode === "delete-sessions") {
+    const session = row.item;
+    closeModal();
+    openSessionDeleteConfirm(session);
+  } else if (modalMode === "diagnostics-providers") {
+    const providerId = row.item.id;
+    closeModal();
+    await openProviderDiagnostics(providerId);
   } else if (modalMode === "mode") {
     const m = row.item.id;
     closeModal();
@@ -804,22 +1729,34 @@ async function selectModalItem() {
     logLine("mod: " + m, "ok");
   } else if (modalMode === "providers") {
     const p = row.item.provider;
-    closeModal();
     const linked = (configCache && configCache.providers && configCache.providers.length > 0)
       ? configCache.providers
-      : (configCache && configCache.apiKey ? [configCache] : []);
+      : (configCache && hasProviderCredential(configCache, p) ? [configCache] : []);
     const existing = linked.find((lp) => (lp.id || lp.provider) === p.id);
-    if (existing && existing.apiKey) {
+    if (existing && hasProviderCredential(existing, p)) {
       configCache.provider = p.id;
-      configCache.apiKey = existing.apiKey;
       configCache.baseUrl = existing.baseUrl;
       configCache.model = existing.model;
+      configCache.protocol = existing.protocol || p.protocol;
+      configCache.authScheme = existing.authScheme || p.authScheme;
+      configCache.secretRef = existing.secretRef || null;
+      configCache.modelsPath = existing.modelsPath || null;
+      configCache.chatPath = existing.chatPath || null;
+      configCache.headerNames = existing.headerNames || [];
+      configCache.requestTimeoutSecs = existing.requestTimeoutSecs || null;
+      configCache.allowLocalNetwork = Boolean(existing.allowLocalNetwork);
+      configCache.contextLimit = existing.contextLimit ?? configCache.contextLimit ?? null;
+      configCache.maxOutputTokens = existing.maxOutputTokens ?? null;
+      configCache.inputPricePerMillion = existing.inputPricePerMillion ?? null;
+      configCache.outputPricePerMillion = existing.outputPricePerMillion ?? null;
+      configCache.cachedInputPricePerMillion = existing.cachedInputPricePerMillion ?? null;
       providerNameCache = p.name;
       persistConfigCache();
       try { await invoke("save_config", { config: configCache }); } catch (e) {}
       openModelMenu();
       return;
     }
+    closeModal();
     openApiModal(p);
   }
 }
@@ -843,18 +1780,8 @@ document.addEventListener("keydown", (ev) => {
     }
   }
 
-  if (ev.key === "ArrowDown") {
+  if (moveModalSelection(ev.key)) {
     ev.preventDefault();
-    if (modalItems.length > 0) {
-      modalIndex = (modalIndex + 1) % modalItems.length;
-      updateModalActive();
-    }
-  } else if (ev.key === "ArrowUp") {
-    ev.preventDefault();
-    if (modalItems.length > 0) {
-      modalIndex = (modalIndex - 1 + modalItems.length) % modalItems.length;
-      updateModalActive();
-    }
   } else if (ev.key === "Enter") {
     ev.preventDefault();
     selectModalItem();
@@ -866,14 +1793,33 @@ document.addEventListener("keydown", (ev) => {
 
 if (modalSearchInput) {
   modalSearchInput.addEventListener("keyup", (ev) => {
-    if (ev.key === "ArrowDown" || ev.key === "ArrowUp" || ev.key === "Enter" || ev.key === "Escape") return;
+    if (["ArrowDown", "ArrowUp", "Home", "End", "PageDown", "PageUp", "Enter", "Escape"].includes(ev.key)) return;
     filterModal();
   });
 }
 
 // ===== MODEL YÖNETİMİ =====
-async function getModels() {
-  if (modelCache) return modelCache;
+async function getModels(force = false, refreshBackend = force) {
+  if (!connectionOnline) {
+    setConnectionOnline(false);
+    return modelCache?.items || [];
+  }
+  const cacheState = modelCacheState(modelCache);
+  if (!force && cacheState === "fresh") return modelCache.items;
+  // Stale-while-revalidate: menü son başarılı listeyle anında açılır, ağ yenilemesi
+  // arkada tek bir istek olarak yürür.
+  if (!force && cacheState === "stale") {
+    if (!modelFetchPromise) {
+      modelFetchPromise = getModels(true, true).finally(() => { modelFetchPromise = null; });
+    }
+    return modelCache.items;
+  }
+  const fallbackItems = modelCache?.items || [];
+  if (!force && modelFetchPromise) return modelFetchPromise;
+  if (!force) {
+    modelFetchPromise = getModels(true, false).finally(() => { modelFetchPromise = null; });
+    return modelFetchPromise;
+  }
   let config;
   try {
     config = configCache || (await invoke("get_config"));
@@ -884,56 +1830,124 @@ async function getModels() {
   if (!config) return [];
 
   const providers = config.providers && config.providers.length > 0 ? config.providers : [config];
-  const all = [];
-  for (const p of providers) {
+  const failures = [];
+  const requests = providers.map(async (p) => {
+    const providerId = p.id || p.provider;
     try {
       const pConfig = {
-        provider: p.id || p.provider,
-        apiKey: p.apiKey,
+        provider: providerId,
         baseUrl: p.baseUrl,
         model: p.model || "",
+        protocol: p.protocol || null,
+        authScheme: p.authScheme || null,
+        secretRef: p.secretRef || null,
+        modelsPath: p.modelsPath || null,
+        chatPath: p.chatPath || null,
+        headerNames: p.headerNames || [],
+        requestTimeoutSecs: p.requestTimeoutSecs || null,
+        allowLocalNetwork: Boolean(p.allowLocalNetwork),
         mode: config.mode || "smart",
         allowList: config.allowList || [],
       };
       countApiCall(); // list_models — API limitine dahil
-      const models = await invoke("list_models", { config: pConfig });
-      const pName = (PROVIDER_REGISTRY[p.id || p.provider] || {}).name || p.id || "Provider";
-      for (const id of models) {
-        all.push({ providerId: p.id || p.provider, providerName: pName, id });
-      }
+      const models = await invoke("list_models", { config: pConfig, refresh: refreshBackend });
+      setConnectionOnline(true);
+      const pName = (PROVIDER_REGISTRY[providerId] || {}).name || providerId || "Provider";
+      return models.map((model) => ({ ...model, providerId, providerName: pName }));
     } catch (e) {
-      // Sessiz değil — hata görünür olsun
-      logLine("model listesi alınamadı (" + (p.id || p.provider) + "): " + e, "err");
+      failures.push(String(e));
+      logLine("model listesi alınamadı (" + providerId + "): " + e, "err");
+      return [];
+    }
+  });
+  const all = (await Promise.all(requests)).flat();
+  // Boş sonucu cache'leme — sonraki denemede tekrar çekilsin
+  if (all.length > 0) {
+    modelCache = {
+      items: all,
+      expiresAt: Date.now() + MODEL_CACHE_TTL_MS,
+      staleUntil: Date.now() + MODEL_CACHE_STALE_MS,
+    };
+    persistPublicModelCache(modelCache);
+    if (modalMode === "models" && !modalSearchInput.value) {
+      modalAllItems = all;
+      renderModalList(all);
+      updateModalActive();
     }
   }
-  // Boş sonucu cache'leme — sonraki denemede tekrar çekilsin
-  if (all.length > 0) modelCache = all;
-  return all;
+  if (!all.length && failures.some(isNetworkFailure)) setConnectionOnline(false);
+  return all.length ? all : fallbackItems;
 }
 
-async function selectModel(providerId, id) {
+async function selectModel(providerId, id, displayName = "") {
   const config = configCache || (await invoke("get_config"));
   if (!config) return;
 
-  // KRİTİK: provider değişiyorsa apiKey/baseUrl'i o provider'ın kaydından al
-  // (aksi halde eski provider'ın key'i ile yeni provider'a istek gider → 405/401)
+  // Provider değişirken yalnızca public metadata ve secret reference taşınır.
   const providerEntry = (config.providers || []).find((p) => (p.id || p.provider) === providerId);
-  if (providerEntry && providerEntry.apiKey) {
-    config.apiKey = providerEntry.apiKey;
+  if (providerEntry) {
     config.baseUrl = providerEntry.baseUrl;
+    config.protocol = providerEntry.protocol || (PROVIDER_REGISTRY[providerId] || {}).protocol;
+    config.authScheme = providerEntry.authScheme || (PROVIDER_REGISTRY[providerId] || {}).authScheme;
+    config.secretRef = providerEntry.secretRef || null;
+    config.modelsPath = providerEntry.modelsPath || null;
+    config.chatPath = providerEntry.chatPath || null;
+    config.headerNames = providerEntry.headerNames || [];
+    config.requestTimeoutSecs = providerEntry.requestTimeoutSecs || null;
+    config.allowLocalNetwork = Boolean(providerEntry.allowLocalNetwork);
+    config.contextLimit = providerEntry.contextLimit ?? config.contextLimit ?? null;
+    config.maxOutputTokens = providerEntry.maxOutputTokens ?? null;
+    config.inputPricePerMillion = providerEntry.inputPricePerMillion ?? null;
+    config.outputPricePerMillion = providerEntry.outputPricePerMillion ?? null;
+    config.cachedInputPricePerMillion = providerEntry.cachedInputPricePerMillion ?? null;
   }
 
   config.provider = providerId;
   config.model = id;
   if (!config.providers || config.providers.length === 0) {
-    config.providers = [{ id: config.provider, apiKey: config.apiKey, baseUrl: config.baseUrl, model: config.model }];
+    config.providers = [{
+      id: config.provider,
+      baseUrl: config.baseUrl,
+      model: config.model,
+      protocol: config.protocol,
+      authScheme: config.authScheme,
+      secretRef: config.secretRef,
+      modelsPath: config.modelsPath,
+      chatPath: config.chatPath,
+      headerNames: config.headerNames || [],
+      requestTimeoutSecs: config.requestTimeoutSecs,
+      allowLocalNetwork: Boolean(config.allowLocalNetwork),
+      contextLimit: config.contextLimit ?? null,
+      maxOutputTokens: config.maxOutputTokens ?? null,
+      inputPricePerMillion: config.inputPricePerMillion ?? null,
+      outputPricePerMillion: config.outputPricePerMillion ?? null,
+      cachedInputPricePerMillion: config.cachedInputPricePerMillion ?? null,
+    }];
   }
   const target = config.providers.find((p) => (p.id || p.provider) === providerId);
   if (target) target.model = id;
+  const selectedModel = modelCache && modelCache.items
+    ? modelCache.items.find((model) => model.providerId === providerId && model.id === id)
+    : null;
+  if (selectedModel && selectedModel.contextWindow) config.contextLimit = selectedModel.contextWindow;
+  if (selectedModel) {
+    config.maxOutputTokens = selectedModel.maxOutputTokens ?? null;
+    config.inputPricePerMillion = selectedModel.inputPricePerMillion ?? null;
+    config.outputPricePerMillion = selectedModel.outputPricePerMillion ?? null;
+    config.cachedInputPricePerMillion = selectedModel.cachedInputPricePerMillion ?? null;
+    if (target) {
+      target.contextLimit = selectedModel.contextWindow ?? config.contextLimit ?? null;
+      target.maxOutputTokens = selectedModel.maxOutputTokens ?? null;
+      target.inputPricePerMillion = selectedModel.inputPricePerMillion ?? null;
+      target.outputPricePerMillion = selectedModel.outputPricePerMillion ?? null;
+      target.cachedInputPricePerMillion = selectedModel.cachedInputPricePerMillion ?? null;
+    }
+  }
   await invoke("save_config", { config });
   configCache = config;
   persistConfigCache();
-  updateModelChip(id);
+  updateModelChip(id, displayName || shortModelName(id));
+  if (currentSession) await checkpointSession(currentSession.draft || null, currentSession.status || "active");
   const p = PROVIDER_REGISTRY[providerId];
   if (p) providerNameCache = p.name;
   cmdInput.focus();
@@ -941,6 +1955,7 @@ async function selectModel(providerId, id) {
 
 async function openModelMenu() {
   hideSuggest();
+  const transitionFromProviders = modalVisibility.visible && modalMode === "providers";
   let models = [];
   try {
     models = await getModels();
@@ -957,7 +1972,14 @@ async function openModelMenu() {
           const pName = (PROVIDER_REGISTRY[p.id || p.provider] || {}).name || p.id || "Provider";
           const m = (p.id || p.provider) === cfg.provider ? cfg.model : p.model;
           if (m) {
-            models.push({ providerId: p.id || p.provider, providerName: pName, id: m });
+            models.push({
+              providerId: p.id || p.provider,
+              providerName: pName,
+              id: m,
+              displayName: m,
+              status: "current",
+              recommended: false,
+            });
           }
         }
         if (models.length) logLine("ağ/limit hatası — mevcut modeller gösteriliyor", "sys");
@@ -966,13 +1988,373 @@ async function openModelMenu() {
   }
   if (models.length === 0) return;
   modalAllItems = models;
-  openModal("models");
+  if (transitionFromProviders) transitionModalContent("models", models, 1);
+  else openModal("models");
 }
 
 function openProviderMenu() {
   hideSuggest();
   modalAllItems = Object.values(PROVIDER_REGISTRY).map((p) => ({ id: p.id, name: p.name, provider: p }));
   openModal("providers");
+}
+
+function linkedProviderById(providerId) {
+  const providers = configCache && Array.isArray(configCache.providers) ? configCache.providers : [];
+  return providers.find((provider) => (provider.id || provider.provider) === providerId) || null;
+}
+
+function runtimeConfigForProvider(providerId) {
+  const entry = linkedProviderById(providerId);
+  if (!entry || !configCache) return null;
+  return {
+    ...configCache,
+    provider: providerId,
+    baseUrl: entry.baseUrl,
+    model: entry.model,
+    protocol: entry.protocol,
+    authScheme: entry.authScheme,
+    secretRef: entry.secretRef || null,
+    modelsPath: entry.modelsPath || null,
+    chatPath: entry.chatPath || null,
+    headerNames: entry.headerNames || [],
+    requestTimeoutSecs: entry.requestTimeoutSecs || null,
+    allowLocalNetwork: Boolean(entry.allowLocalNetwork),
+    contextLimit: entry.contextLimit ?? configCache.contextLimit ?? null,
+    maxOutputTokens: entry.maxOutputTokens ?? null,
+    inputPricePerMillion: entry.inputPricePerMillion ?? null,
+    outputPricePerMillion: entry.outputPricePerMillion ?? null,
+    cachedInputPricePerMillion: entry.cachedInputPricePerMillion ?? null,
+  };
+}
+
+// ===== PROVIDER HEALTH & DIAGNOSTICS =====
+const diagnosticsModal = document.getElementById("diagnostics-modal");
+const diagnosticsSurface = diagnosticsModal.querySelector(".diagnostics-window");
+const diagnosticsProvider = document.getElementById("diagnostics-provider");
+const diagnosticsTitle = document.getElementById("diagnostics-title");
+const diagnosticsOverall = document.getElementById("diagnostics-overall");
+const diagnosticsContent = document.getElementById("diagnostics-content");
+const diagnosticsClose = document.getElementById("diagnostics-close");
+const diagnosticsRefresh = document.getElementById("diagnostics-refresh");
+const diagnosticsDeep = document.getElementById("diagnostics-deep");
+const diagnosticsCopy = document.getElementById("diagnostics-copy");
+const diagnosticsVisibility = createVisibilityController(uiMotion, {
+  root: diagnosticsModal,
+  surface: diagnosticsSurface,
+  openDuration: UI_MOTION.fast,
+  surfaceOpenDuration: UI_MOTION.dialog,
+  closeDuration: UI_MOTION.fast,
+  surfaceCloseDuration: UI_MOTION.fast,
+});
+let diagnosticsProviderId = null;
+let diagnosticsReport = null;
+let diagnosticsGeneration = 0;
+let diagnosticsReturnFocus = null;
+let diagnosticsBusy = false;
+
+function diagnosticMeta(label, value) {
+  const row = document.createElement("div");
+  row.className = "diagnostics-meta-item";
+  const key = document.createElement("span");
+  key.textContent = label;
+  const data = document.createElement("strong");
+  data.textContent = value || "—";
+  row.append(key, data);
+  return row;
+}
+
+function diagnosticMoney(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount < 0) return "—";
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4,
+  }).format(amount);
+}
+
+function diagnosticCheckRow(entry) {
+  const row = document.createElement("article");
+  row.className = "diagnostics-check";
+  row.dataset.state = entry.state || "unknown";
+  const marker = document.createElement("span");
+  marker.className = "diagnostics-check-marker";
+  marker.setAttribute("aria-hidden", "true");
+  const copy = document.createElement("div");
+  copy.className = "diagnostics-check-copy";
+  const head = document.createElement("div");
+  head.className = "diagnostics-check-head";
+  const title = document.createElement("strong");
+  title.textContent = entry.title || entry.id || "Kontrol";
+  const state = document.createElement("span");
+  state.textContent = diagnosticStateLabel(entry.state);
+  if (Number.isFinite(Number(entry.latencyMs))) state.textContent += ` · ${Math.round(Number(entry.latencyMs))} ms`;
+  head.append(title, state);
+  const detail = document.createElement("p");
+  detail.textContent = entry.detail || "";
+  copy.append(head, detail);
+  if (entry.action) {
+    const action = document.createElement("p");
+    action.className = "diagnostics-check-action";
+    action.textContent = entry.action;
+    copy.appendChild(action);
+  }
+  row.append(marker, copy);
+  return row;
+}
+
+function renderDiagnosticsLoading(providerId, deep) {
+  const provider = PROVIDER_REGISTRY[providerId];
+  diagnosticsProvider.textContent = provider?.name || providerId;
+  diagnosticsTitle.textContent = deep ? "Deep bağlantı testi" : "Bağlantı tanılaması";
+  diagnosticsOverall.dataset.state = "checking";
+  diagnosticsOverall.textContent = "Kontrol ediliyor";
+  diagnosticsContent.innerHTML = "";
+  const loading = document.createElement("div");
+  loading.className = "diagnostics-loading";
+  for (const label of ["Kimlik bilgisi", "Model kataloğu", "Chat endpoint", "Araç desteği"]) {
+    const line = document.createElement("span");
+    line.textContent = label;
+    loading.appendChild(line);
+  }
+  diagnosticsContent.appendChild(loading);
+}
+
+function renderDiagnostics(report) {
+  diagnosticsProvider.textContent = report.providerName || report.providerId || "Provider";
+  diagnosticsTitle.textContent = report.requestedModel ? shortModelName(report.requestedModel) : "Bağlantı tanılaması";
+  diagnosticsOverall.dataset.state = report.overall || "unknown";
+  diagnosticsOverall.textContent = diagnosticStateLabel(report.overall);
+  diagnosticsContent.innerHTML = "";
+
+  const summary = document.createElement("section");
+  summary.className = "diagnostics-summary";
+  summary.append(
+    diagnosticMeta("Endpoint", report.endpoint),
+    diagnosticMeta("Protokol", report.protocol),
+    diagnosticMeta("Katalog", report.modelCount === null || report.modelCount === undefined ? "—" : `${report.modelCount} model`),
+  );
+  diagnosticsContent.appendChild(summary);
+
+  if (report.lastRequest) {
+    const last = document.createElement("section");
+    last.className = "diagnostics-last-request";
+    const label = document.createElement("span");
+    label.textContent = "Son istek";
+    const value = document.createElement("strong");
+    value.textContent = `${lastRequestModel(report.lastRequest)} · ${report.lastRequest.latencyMs || 0} ms · ${statusNumber(report.lastRequest.totalTokens || 0)} token`;
+    last.append(label, value);
+    diagnosticsContent.appendChild(last);
+  }
+
+  const checks = document.createElement("section");
+  checks.className = "diagnostics-checks";
+  for (const entry of report.checks || []) checks.appendChild(diagnosticCheckRow(entry));
+  diagnosticsContent.appendChild(checks);
+
+  const limits = Object.entries(report.rateLimits || {}).filter(([, value]) => value !== null && value !== undefined && value !== "");
+  if (report.account || limits.length) {
+    const limitSection = document.createElement("section");
+    limitSection.className = "diagnostics-limits";
+    const heading = document.createElement("span");
+    heading.textContent = report.account ? "Hesap ve provider limitleri" : "Provider limitleri";
+    limitSection.appendChild(heading);
+    if (report.account) {
+      limitSection.append(
+        diagnosticMeta("kalan kredi", diagnosticMoney(report.account.remainingUsd)),
+        diagnosticMeta("kullanım", diagnosticMoney(report.account.usageUsd)),
+        diagnosticMeta("hesap", report.account.tier || "—"),
+      );
+    }
+    for (const [key, value] of limits.slice(0, 6)) {
+      limitSection.appendChild(diagnosticMeta(key.replace(/([A-Z])/g, " $1").toLowerCase(), String(value)));
+    }
+    diagnosticsContent.appendChild(limitSection);
+  }
+
+  revealMenuContent(diagnosticsModal, ".diagnostics-summary, .diagnostics-last-request, .diagnostics-check, .diagnostics-limits", {
+    delay: 32,
+    stagger: 18,
+    maxItems: 12,
+  });
+}
+
+function lastRequestModel(observation) {
+  return shortModelName(observation.responseModel || observation.requestedModel || "model");
+}
+
+function diagnosticObservation(providerId) {
+  const observation = currentSession?.usage?.lastRequest || null;
+  return observation?.provider === providerId ? observation : null;
+}
+
+function setDiagnosticsBusy(value) {
+  diagnosticsBusy = value;
+  diagnosticsContent?.setAttribute("aria-busy", value ? "true" : "false");
+  diagnosticsRefresh.disabled = value;
+  diagnosticsDeep.disabled = value;
+  diagnosticsCopy.disabled = value || !diagnosticsReport;
+}
+
+async function runProviderDiagnostics(providerId, deep = false) {
+  const config = runtimeConfigForProvider(providerId);
+  if (!config) throw new Error("Provider bağlı değil");
+  const generation = ++diagnosticsGeneration;
+  setDiagnosticsBusy(true);
+  renderDiagnosticsLoading(providerId, deep);
+  try {
+    const nativeReport = await invoke("diagnose_provider", { config, deep });
+    if (generation !== diagnosticsGeneration || diagnosticsProviderId !== providerId) return null;
+    diagnosticsReport = mergeDiagnosticReport(nativeReport, diagnosticObservation(providerId));
+    providerDiagnosticCache.set(providerId, diagnosticsReport);
+    renderDiagnostics(diagnosticsReport);
+    return diagnosticsReport;
+  } catch (error) {
+    if (generation !== diagnosticsGeneration) return null;
+    diagnosticsReport = mergeDiagnosticReport({
+      providerId,
+      providerName: PROVIDER_REGISTRY[providerId]?.name || providerId,
+      overall: "failed",
+      endpoint: "",
+      protocol: config.protocol,
+      requestedModel: config.model,
+      checks: [{
+        id: "runtime",
+        title: "Tanılama motoru",
+        state: "failed",
+        detail: safeError(error),
+        action: "Provider bağlantısını yenileyip tekrar deneyin.",
+      }],
+    }, diagnosticObservation(providerId));
+    providerDiagnosticCache.set(providerId, diagnosticsReport);
+    renderDiagnostics(diagnosticsReport);
+    return diagnosticsReport;
+  } finally {
+    if (generation === diagnosticsGeneration) setDiagnosticsBusy(false);
+  }
+}
+
+async function openProviderDiagnostics(providerId) {
+  if (!runtimeConfigForProvider(providerId)) {
+    showStatusToast("Bu provider bağlı değil.");
+    return;
+  }
+  diagnosticsProviderId = providerId;
+  diagnosticsReport = providerDiagnosticCache.get(providerId) || null;
+  diagnosticsReturnFocus = document.activeElement;
+  void diagnosticsVisibility.open();
+  if (diagnosticsReport) renderDiagnostics(mergeDiagnosticReport(diagnosticsReport, diagnosticObservation(providerId)));
+  else renderDiagnosticsLoading(providerId, false);
+  revealMenuContent(diagnosticsModal, ".diagnostics-header, .diagnostics-actions", { delay: 38, stagger: 24, maxItems: 2 });
+  requestAnimationFrame(() => diagnosticsClose.focus());
+  await runProviderDiagnostics(providerId, false);
+}
+
+async function openDiagnosticsMenu() {
+  hideSuggest();
+  const linked = (configCache?.providers || []).filter((entry) => hasProviderCredential(entry, PROVIDER_REGISTRY[entry.id || entry.provider]));
+  if (!linked.length && configCache?.provider && hasProviderCredential(configCache, PROVIDER_REGISTRY[configCache.provider])) {
+    linked.push(configCache);
+  }
+  const unique = [...new Map(linked.map((entry) => {
+    const id = entry.id || entry.provider;
+    return [id, { id, name: PROVIDER_REGISTRY[id]?.name || id }];
+  })).values()];
+  if (!unique.length) {
+    showStatusToast("Önce bir provider bağlayın.");
+    return;
+  }
+  if (unique.length === 1) {
+    await openProviderDiagnostics(unique[0].id);
+    return;
+  }
+  modalAllItems = unique;
+  openModal("diagnostics-providers");
+}
+
+function closeProviderDiagnostics() {
+  if (!diagnosticsVisibility.visible) return;
+  diagnosticsGeneration++;
+  void diagnosticsVisibility.close();
+  diagnosticsProviderId = null;
+  setDiagnosticsBusy(false);
+  const target = diagnosticsReturnFocus?.isConnected ? diagnosticsReturnFocus : cmdInput;
+  diagnosticsReturnFocus = null;
+  target.focus();
+}
+
+async function copyProviderDiagnostics() {
+  if (!diagnosticsReport) return;
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(diagnosticExport(diagnosticsReport), null, 2));
+    showStatusToast("Güvenli tanılama raporu kopyalandı.");
+  } catch (error) {
+    showStatusToast("Rapor panoya kopyalanamadı.");
+  }
+}
+
+diagnosticsClose?.addEventListener("click", closeProviderDiagnostics);
+diagnosticsRefresh?.addEventListener("click", () => {
+  if (!diagnosticsBusy && diagnosticsProviderId) void runProviderDiagnostics(diagnosticsProviderId, false);
+});
+diagnosticsDeep?.addEventListener("click", () => {
+  if (!diagnosticsBusy && diagnosticsProviderId) void runProviderDiagnostics(diagnosticsProviderId, true);
+});
+diagnosticsCopy?.addEventListener("click", () => void copyProviderDiagnostics());
+diagnosticsModal?.addEventListener("click", (event) => {
+  if (event.target === diagnosticsModal) closeProviderDiagnostics();
+});
+document.addEventListener("keydown", (event) => {
+  if (!diagnosticsVisibility.visible) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopPropagation();
+    closeProviderDiagnostics();
+    return;
+  }
+  if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+    const controls = [diagnosticsRefresh, diagnosticsDeep, diagnosticsCopy, diagnosticsClose]
+      .filter((control) => control && !control.disabled);
+    if (!controls.length) return;
+    const current = controls.indexOf(document.activeElement);
+    const direction = event.key === "ArrowRight" ? 1 : -1;
+    const next = current < 0
+      ? controls[0]
+      : controls[(current + direction + controls.length) % controls.length];
+    event.preventDefault();
+    event.stopPropagation();
+    next.focus({ preventScroll: true });
+  }
+}, true);
+
+async function testLinkedProvider(providerId) {
+  const config = runtimeConfigForProvider(providerId);
+  if (!config) throw new Error("Provider bağlı değil");
+  countApiCall();
+  const result = await invoke("test_provider_connection", { config });
+  logLine(`${providerId}: ${result.message}`, "ok");
+  return result;
+}
+
+async function reconnectProvider(providerId) {
+  const entry = linkedProviderById(providerId);
+  const provider = PROVIDER_REGISTRY[providerId];
+  if (!provider) throw new Error("Provider bulunamadı");
+  openApiModal({ ...provider, ...(entry || {}), id: providerId, name: provider.name });
+}
+
+async function removeLinkedProvider(providerId) {
+  const updated = await invoke("disconnect_provider", { providerId });
+  configCache = upgradeProviderConfig(updated);
+  modelCache = null;
+  providerNameCache = configCache && PROVIDER_REGISTRY[configCache.provider]
+    ? PROVIDER_REGISTRY[configCache.provider].name
+    : null;
+  persistConfigCache();
+  if (configCache && configCache.model) updateModelChip(configCache.model);
+  logLine(`${providerId}: bağlantı ve güvenli kimlik bilgisi silindi`, "ok");
+  if (!configCache || !configCache.provider) openProviderMenu();
 }
 
 function openModeMenu() {
@@ -984,6 +2366,94 @@ function openModeMenu() {
   ];
   openModal("mode");
 }
+
+async function openSessionsMenu() {
+  modalAllItems = await invoke("list_sessions");
+  openModal("sessions");
+}
+
+async function openDeleteSessionsMenu() {
+  if (activeRequestId) {
+    renderAlert("Aktif yanıt sürerken konuşma silinemez.");
+    return;
+  }
+  modalAllItems = await invoke("list_sessions");
+  if (!modalAllItems.length) {
+    showStatusToast("Silinebilecek konuşma yok.");
+    return;
+  }
+  openModal("delete-sessions");
+}
+
+function openSessionDeleteConfirm(session) {
+  pendingSessionDelete = session;
+  deleteReturnFocus = document.activeElement;
+  sessionDeleteDescription.textContent = `“${session.title}” kalıcı olarak silinecek. Bu işlem geri alınamaz.`;
+  void sessionDeleteVisibility.open();
+  revealMenuContent(sessionDeleteModal, ".confirm-copy, .confirm-actions", { delay: 55, stagger: 30, maxItems: 2 });
+  requestAnimationFrame(() => sessionDeleteCancel.focus());
+}
+
+function closeSessionDeleteConfirm() {
+  void sessionDeleteVisibility.close();
+  pendingSessionDelete = null;
+  const target = deleteReturnFocus;
+  deleteReturnFocus = null;
+  if (target && typeof target.focus === "function" && target.isConnected) target.focus();
+  else cmdInput.focus();
+}
+
+async function confirmSessionDelete() {
+  const session = pendingSessionDelete;
+  if (!session) return;
+  sessionDeleteConfirm.disabled = true;
+  try {
+    const deleted = await invoke("delete_session", { id: session.id });
+    closeSessionDeleteConfirm();
+    if (!deleted) {
+      showStatusToast("Konuşma daha önce silinmiş.");
+      return;
+    }
+    if (currentSession?.id === session.id) await newSession();
+    showStatusToast(`“${session.title}” silindi · geri alınamaz`);
+  } catch (error) {
+    renderAlert("konuşma silinemedi: " + safeError(error));
+  } finally {
+    sessionDeleteConfirm.disabled = false;
+  }
+}
+
+sessionDeleteCancel?.addEventListener("click", closeSessionDeleteConfirm);
+sessionDeleteConfirm?.addEventListener("click", () => void confirmSessionDelete());
+sessionDeleteModal?.addEventListener("click", (event) => {
+  if (event.target === sessionDeleteModal) closeSessionDeleteConfirm();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (!sessionDeleteModal || sessionDeleteModal.style.display === "none") return;
+  const controls = [sessionDeleteCancel, sessionDeleteConfirm];
+  const current = Math.max(0, controls.indexOf(document.activeElement));
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeSessionDeleteConfirm();
+    return;
+  }
+  if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+    event.preventDefault();
+    controls[(current + (event.key === "ArrowRight" ? 1 : -1) + controls.length) % controls.length].focus();
+    return;
+  }
+  if (event.key === "Enter") {
+    event.preventDefault();
+    if (document.activeElement === sessionDeleteConfirm) void confirmSessionDelete();
+    else closeSessionDeleteConfirm();
+    return;
+  }
+  if (event.key === "Tab") {
+    event.preventDefault();
+    controls[(current + (event.shiftKey ? -1 : 1) + controls.length) % controls.length].focus();
+  }
+}, true);
 
 // ===== AUTCOMPLETE =====
 async function updateSuggestions() {
@@ -1000,16 +2470,527 @@ async function updateSuggestions() {
 
 // ===== KOMUT INPUT =====
 const cmdInput = document.getElementById("cmd-input");
+const streamStop = document.getElementById("stream-stop");
+const streamActions = document.getElementById("stream-actions");
 let cmdHistory = [];
 let historyIdx = -1;
+let conversationHistory = [];
+let currentSession = null;
+let activeRequestId = null;
+let activeStreamRenderer = null;
+let lastStreamSequence = 0;
+let checkpointTimer = null;
+let sessionSaveChain = Promise.resolve();
+
+function requestId() {
+  return "req-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+}
+
+function sessionTitle(text) {
+  return String(text || "").trim().replace(/\s+/g, " ").slice(0, 64) || "Yeni konuşma";
+}
+
+async function ensureSession(firstMessage) {
+  if (currentSession) return currentSession;
+  currentSession = await invoke("create_session", {
+    title: sessionTitle(firstMessage),
+    provider: configCache?.provider || "",
+    model: configCache?.model || "",
+    workspace: WORKSPACE_DIR || "",
+  });
+  normalizeSessionIntelligence(currentSession);
+  return currentSession;
+}
+
+async function checkpointSession(draft = null, status = "active") {
+  if (!currentSession) return;
+  normalizeSessionIntelligence(currentSession);
+  currentSession.messages = conversationHistory;
+  currentSession.draft = draft;
+  currentSession.status = status;
+  currentSession.provider = configCache?.provider || currentSession.provider;
+  currentSession.model = configCache?.model || currentSession.model;
+  currentSession.contextLimit = configCache?.contextLimit ?? currentSession.contextLimit ?? null;
+  currentSession.contextRatio = configCache?.contextRatio ?? currentSession.contextRatio ?? null;
+  currentSession.compaction.threshold = contextRatioOf(configCache);
+  currentSession.workspace = WORKSPACE_DIR || currentSession.workspace;
+  const snapshot = JSON.parse(JSON.stringify(currentSession));
+  sessionSaveChain = sessionSaveChain.catch(() => {}).then(async () => {
+    const saved = await invoke("save_session", { session: snapshot });
+    if (currentSession?.id === saved.id && currentSession.status === snapshot.status) {
+      currentSession.updatedAt = saved.updatedAt;
+    }
+    return saved;
+  });
+  return sessionSaveChain;
+}
+
+function scheduleDraftCheckpoint(draft) {
+  if (checkpointTimer) return;
+  checkpointTimer = setTimeout(async () => {
+    checkpointTimer = null;
+    try { await checkpointSession(draft, "interrupted"); } catch (e) {}
+  }, 2000);
+}
+
+function compactionBoundary(mode = "auto") {
+  if (!currentSession) return null;
+  normalizeSessionIntelligence(currentSession);
+  const through = Math.max(0, Number(currentSession.compaction.compactedThrough || 0));
+  const userStarts = [];
+  for (let index = through; index < conversationHistory.length; index++) {
+    if (conversationHistory[index]?.role === "user") userStarts.push(index);
+  }
+  const keepUserTurns = mode === "auto" ? 4 : 1;
+  if (userStarts.length <= keepUserTurns) return null;
+  const boundary = userStarts[userStarts.length - keepUserTurns];
+  return boundary > through ? boundary : null;
+}
+
+function serializeCompactionMessages(messages) {
+  return messages.map((message, index) => {
+    const lines = [`[${index + 1}] role=${message.role}`];
+    if (message.toolCallId) lines.push(`toolCallId=${message.toolCallId}`);
+    if (message.toolCalls?.length) lines.push("toolCalls=" + JSON.stringify(message.toolCalls));
+    if (message.content) lines.push(String(message.content));
+    if (message.reasoningContent) lines.push("reasoning=" + String(message.reasoningContent));
+    return lines.join("\n");
+  }).join("\n\n---\n\n");
+}
+
+function compactionPrompt(previousSummary, messages) {
+  return (
+    "Aşağıdaki eski oturum bağlamını, daha sonra aynı işi kesintisiz sürdürecek başka bir AI için güncelle. " +
+    "Araç çağırma; yalnızca yapılandırılmış Türkçe özet döndür. Önceki özet varsa onu baştan yorumlayıp ayrıntı kaybetme, yeni bilgileri ilgili bölümlere birleştir. " +
+    "Dosya yollarını, fonksiyon/değişken adlarını, hata metinlerini, sayıları ve kullanıcı kısıtlarını aynen koru. " +
+    "Tool çağrıları ile sonuçlarının ilişkisini belirt; gerçek olmayan ayrıntı ekleme.\n\n" +
+    "ZORUNLU BÖLÜMLER:\n" +
+    "## Oturum Amacı\n## Kullanıcı Kısıtları\n## Alınan Kararlar\n## Dosyalar ve Artifactler\n" +
+    "## Tool Sonuçları\n## Mevcut Durum\n## Açık İşler ve Sonraki Adımlar\n\n" +
+    "ÖNCEKİ ANCHORED ÖZET:\n" + (previousSummary || "(ilk compact)") +
+    "\n\nYENİ SIKIŞTIRILACAK MESAJLAR:\n" + serializeCompactionMessages(messages)
+  );
+}
+
+async function performCompaction(mode = "manual", homeDir = "") {
+  if (!currentSession) return { compacted: false, reason: "Önce bir oturum başlatılmalı." };
+  normalizeSessionIntelligence(currentSession);
+  const boundary = compactionBoundary(mode);
+  if (boundary === null) {
+    return { compacted: false, reason: "Sıkıştırmak için yeterli eski konuşma turu yok." };
+  }
+
+  const previousCompaction = JSON.parse(JSON.stringify(currentSession.compaction));
+  const previousUsage = JSON.parse(JSON.stringify(currentSession.usage));
+  const previousThrough = Number(previousCompaction.compactedThrough || 0);
+  const span = conversationHistory.slice(previousThrough, boundary);
+  const beforeHistory = effectiveRequestHistory(configCache, homeDir);
+  const tokensBefore = estimateTokens(beforeHistory);
+  const summaryRequest = [
+    {
+      role: "system",
+      content: "You are a loss-aware context compactor. Never call tools. Preserve exact technical identifiers and output only the requested structured summary.",
+    },
+    { role: "user", content: compactionPrompt(previousCompaction.summary, span) },
+  ];
+
+  currentSession.messages = conversationHistory;
+  const checkpoint = JSON.parse(JSON.stringify(currentSession));
+  await invoke("checkpoint_session", { session: checkpoint });
+
+  try {
+    countApiCall();
+    const reply = await invoke("chat_completion", { config: configCache, messages: summaryRequest });
+    const summary = String(reply?.text || "").trim();
+    if (!summary) throw new Error("Provider geçerli compact özeti döndürmedi");
+
+    currentSession.compaction = {
+      ...previousCompaction,
+      autoEnabled: true,
+      threshold: contextRatioOf(configCache),
+      summary,
+      compactedThrough: boundary,
+      count: Number(previousCompaction.count || 0) + 1,
+      lastAt: Date.now(),
+      lastMode: mode,
+      tokensBefore,
+    };
+    const tokensAfter = estimateTokens(effectiveRequestHistory(configCache, homeDir));
+    if (tokensAfter >= tokensBefore) {
+      throw new Error("Compact özeti mevcut bağlamdan daha küçük olmadı; geçmiş değiştirilmedi");
+    }
+    recordReplyUsage(reply, summaryRequest, { updateContext: false });
+    currentSession.compaction.tokensAfter = tokensAfter;
+    currentSession.compaction.tokensSaved = Math.max(0, tokensBefore - tokensAfter);
+    currentSession.usage.currentContextTokens = tokensAfter;
+    await checkpointSession(null, currentSession.status || "active");
+    updateCtxGauge(effectiveConversationHistory(), null);
+    return {
+      compacted: true,
+      before: tokensBefore,
+      after: tokensAfter,
+      saved: currentSession.compaction.tokensSaved,
+      boundary,
+    };
+  } catch (error) {
+    currentSession.compaction = previousCompaction;
+    currentSession.usage = previousUsage;
+    throw error;
+  }
+}
+
+function shouldAutoCompact(history) {
+  if (!currentSession) return false;
+  normalizeSessionIntelligence(currentSession);
+  if (!currentSession.compaction.autoEnabled) return false;
+  const used = Math.max(
+    estimateTokens(history || effectiveRequestHistory(configCache, "")),
+    Number(currentSession.usage.currentContextTokens || 0),
+  );
+  return used >= compactThresholdFor(configCache) && compactionBoundary("auto") !== null;
+}
+
+function formatUsd(value) {
+  if (value === null || value === undefined || value === "") return "sağlayıcı fiyat bildirmiyor";
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "sağlayıcı fiyat bildirmiyor";
+  if (number < 0.01) return "$" + number.toFixed(5);
+  return "$" + number.toFixed(3);
+}
+
+const statusModal = document.getElementById("status-modal");
+const statusProvider = document.getElementById("status-provider");
+const statusTitle = document.getElementById("status-title");
+const statusContent = document.getElementById("status-content");
+const statusClose = document.getElementById("status-close");
+const statusVisibility = createVisibilityController(uiMotion, {
+  root: statusModal,
+  surface: statusModal.querySelector(".status-window"),
+  openDuration: UI_MOTION.fast,
+  surfaceOpenDuration: UI_MOTION.dialog,
+  closeDuration: UI_MOTION.fast,
+  surfaceCloseDuration: UI_MOTION.fast,
+});
+let statusReturnFocus = null;
+
+function statusMetric(label, value, emphasis = false) {
+  const row = document.createElement("div");
+  row.className = "status-metric" + (emphasis ? " emphasis" : "");
+  const key = document.createElement("span");
+  key.className = "status-metric-label";
+  key.textContent = label;
+  const data = document.createElement("span");
+  data.className = "status-metric-value";
+  data.textContent = value;
+  row.append(key, data);
+  return row;
+}
+
+function statusSection(title, rows) {
+  const section = document.createElement("section");
+  section.className = "status-section";
+  const heading = document.createElement("h3");
+  heading.textContent = title;
+  section.appendChild(heading);
+  rows.forEach((row) => section.appendChild(row));
+  return section;
+}
+
+function limitSnapshot(remaining, limit, reset) {
+  const hasRemaining = remaining !== null && remaining !== undefined && remaining !== "";
+  const hasLimit = limit !== null && limit !== undefined && limit !== "";
+  const hasReset = reset !== null && reset !== undefined && reset !== "";
+  if (!hasRemaining && !hasLimit && !hasReset) return "";
+  let value = hasRemaining && hasLimit
+    ? `${remaining} / ${limit}`
+    : hasRemaining
+      ? `${remaining} kaldı`
+      : hasLimit
+        ? `limit ${limit}`
+        : "";
+  if (hasReset) value += `${value ? " · " : ""}${reset}`;
+  return value;
+}
+
+function statusNumber(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return String(value ?? "—");
+  if (number >= 1_000_000) return `${(number / 1_000_000).toFixed(number >= 10_000_000 ? 0 : 1)}m`;
+  if (number >= 1_000) return `${(number / 1_000).toFixed(number >= 100_000 ? 0 : 1)}k`;
+  return Number.isInteger(number) ? String(number) : number.toFixed(1);
+}
+
+function rateLimitCandidates(rate) {
+  return [
+    ["requests", "İstek", rate.requestsRemaining, rate.requestsLimit, rate.requestsReset],
+    ["tokens", "Token", rate.tokensRemaining, rate.tokensLimit, rate.tokensReset],
+    ["input", "Input", rate.inputTokensRemaining, rate.inputTokensLimit, rate.inputTokensReset],
+    ["output", "Output", rate.outputTokensRemaining, rate.outputTokensLimit, rate.outputTokensReset],
+    ["cached", "Cache input", rate.cachedInputTokensRemaining, rate.cachedInputTokensLimit, rate.cachedInputTokensReset],
+    ["project", "Proje token", rate.projectTokensRemaining, rate.projectTokensLimit, rate.projectTokensReset],
+  ];
+}
+
+function rateLimitMetrics(rate, omittedKey = "") {
+  const rows = rateLimitCandidates(rate)
+    .filter(([key]) => key !== omittedKey)
+    .map(([, label, remaining, limit, reset]) => [label, limitSnapshot(remaining, limit, reset)])
+    .filter(([, value]) => value)
+    .map(([label, value]) => statusMetric(label, value));
+  if (rate.retryAfter) rows.push(statusMetric("Yeniden dene", String(rate.retryAfter)));
+  return rows;
+}
+
+function statusHero(rate, usage, context) {
+  for (const [key, label, remaining, limit, reset] of rateLimitCandidates(rate)) {
+    if (remaining !== null && remaining !== undefined && remaining !== "") {
+      const limitValue = Number(limit);
+      const remainingValue = Number(remaining);
+      return {
+        key,
+        label: `${label.toLocaleLowerCase("tr-TR")} kaldı`,
+        value: statusNumber(remaining),
+        detail: `${limit ? `/ ${statusNumber(limit)}` : ""}${reset ? ` · ${reset}` : ""}`.trim(),
+        progress: Number.isFinite(limitValue) && limitValue > 0 && Number.isFinite(remainingValue)
+          ? Math.max(0, Math.min(100, (remainingValue / limitValue) * 100))
+          : context.percent,
+      };
+    }
+  }
+
+  for (const [key, label, , limit, reset] of rateLimitCandidates(rate)) {
+    if (limit !== null && limit !== undefined && limit !== "") {
+      return {
+        key,
+        label: `${label.toLocaleLowerCase("tr-TR")} limiti`,
+        value: statusNumber(limit),
+        detail: reset ? String(reset) : "provider limiti",
+        progress: context.percent,
+      };
+    }
+  }
+
+  if (Number(usage.totalTokens) > 0) {
+    return {
+      key: "usage",
+      label: "kullanılan token",
+      value: statusNumber(usage.totalTokens),
+      detail: `${statusNumber(usage.inputTokens)} input · ${statusNumber(usage.outputTokens)} output`,
+      progress: context.percent,
+    };
+  }
+
+  return {
+    key: "context",
+    label: "context kullanımı",
+    value: `%${context.percent.toFixed(1)}`,
+    detail: `${statusNumber(context.used)} / ${statusNumber(context.limit)} · ${context.source}`,
+    progress: context.percent,
+  };
+}
+
+function renderSessionStatus() {
+  const usage = currentSession ? normalizeSessionIntelligence(currentSession).usage : defaultSessionUsage();
+  const limit = contextLimitOf(configCache);
+  const used = currentContextTokens(effectiveConversationHistory());
+  const remaining = Math.max(0, limit - used);
+  const percent = limit > 0 ? Math.min(100, (used / limit) * 100) : 0;
+  const source = usage.source || "estimated";
+  const rate = usage.rateLimits || {};
+  const hero = statusHero(rate, usage, { limit, used, remaining, percent, source });
+  const rateRows = rateLimitMetrics(rate, hero.key);
+
+  statusProvider.textContent = providerNameCache || configCache?.provider || "Oturum";
+  statusTitle.textContent = shortModelName(configCache?.model || "model");
+  statusContent.innerHTML = "";
+
+  const heroSection = document.createElement("section");
+  heroSection.className = "status-hero";
+  const heroLabel = document.createElement("span");
+  heroLabel.className = "status-hero-label";
+  heroLabel.textContent = hero.label;
+  const heroTop = document.createElement("div");
+  heroTop.className = "status-hero-top";
+  const heroValue = document.createElement("strong");
+  heroValue.textContent = hero.value;
+  const heroDetail = document.createElement("span");
+  heroDetail.textContent = hero.detail;
+  heroTop.append(heroValue, heroDetail);
+  const track = document.createElement("div");
+  track.className = "status-hero-track";
+  const fill = document.createElement("span");
+  fill.style.setProperty("--status-progress", `${hero.progress}%`);
+  track.appendChild(fill);
+  heroSection.append(heroLabel, heroTop, track);
+
+  statusContent.append(
+    heroSection,
+    statusSection("Oturum", [
+      statusMetric("Context", `${statusNumber(used)} / ${statusNumber(limit)} · %${percent.toFixed(1)}`, hero.key === "context"),
+      statusMetric("Input / output", `${statusNumber(usage.inputTokens)} / ${statusNumber(usage.outputTokens)}`),
+      statusMetric("Reasoning / cached", `${statusNumber(usage.reasoningTokens)} / ${statusNumber(usage.cachedTokens)}`),
+      statusMetric("API / maliyet", `${usage.apiCalls} çağrı · ${formatUsd(usage.costUsd)}`),
+    ]),
+  );
+  if (rateRows.length) statusContent.appendChild(statusSection("Limitler", rateRows));
+
+  statusReturnFocus = document.activeElement;
+  void statusVisibility.open();
+  revealMenuContent(statusModal, ".status-header, .status-hero, .status-section", {
+    delay: 52,
+    stagger: 26,
+    maxItems: 8,
+  });
+  requestAnimationFrame(() => statusClose.focus());
+}
+
+function closeSessionStatus() {
+  if (!statusModal || statusModal.style.display === "none") return;
+  void statusVisibility.close();
+  const target = statusReturnFocus && typeof statusReturnFocus.focus === "function" ? statusReturnFocus : cmdInput;
+  target.focus();
+  statusReturnFocus = null;
+}
+
+statusClose?.addEventListener("click", closeSessionStatus);
+statusModal?.addEventListener("click", (event) => {
+  if (event.target === statusModal) closeSessionStatus();
+});
+document.addEventListener("keydown", (event) => {
+  if (!statusModal || statusModal.style.display === "none") return;
+  if (event.key === "Escape" || event.key === "Enter") {
+    event.preventDefault();
+    event.stopPropagation();
+    closeSessionStatus();
+  }
+}, true);
+
+async function generateSmartSessionTitle(userMessage, assistantText) {
+  if (!currentSession || currentSession.titleGenerated) return;
+  const userTurns = conversationHistory.filter((message) => message.role === "user").length;
+  if (userTurns !== 1 || !assistantText.trim()) return;
+  const sessionId = currentSession.id;
+  currentSession.titleGenerated = true;
+  try {
+    countApiCall();
+    const title = await invoke("generate_session_title", {
+      config: configCache,
+      userMessage,
+      assistantText,
+    });
+    if (currentSession?.id !== sessionId) return;
+    currentSession.title = sessionTitle(title);
+    await checkpointSession(currentSession.draft || null, currentSession.status || "complete");
+  } catch (error) {
+    if (currentSession?.id === sessionId) {
+      currentSession.titleGenerated = false;
+      try { await checkpointSession(currentSession.draft || null, currentSession.status || "complete"); } catch (saveError) {}
+    }
+  }
+}
+
+function renderSession(record) {
+  logEl.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  logRenderTarget = fragment;
+  const savedToolCalls = new Map();
+  try {
+    for (const message of record.messages || []) {
+      if (message.role === "user") userBlock(message.content || "");
+      else if (message.role === "assistant") {
+        for (const call of message.toolCalls || []) savedToolCalls.set(call.id, call);
+        if (message.content) completedRichMessage(message.content, (message.toolCalls || []).length ? "ai-step complete" : "assistant-response");
+      }
+      else if (message.role === "tool") {
+        const content = String(message.content || "");
+        const match = content.match(/^\[tool:([^\]]+)]\s*/);
+        const savedCall = savedToolCalls.get(message.toolCallId);
+        const toolName = savedCall?.name || match?.[1] || "araç sonucu";
+        const params = savedCall?.arguments && typeof savedCall.arguments === "object" ? savedCall.arguments : {};
+        const target = toolName === "execute_command"
+          ? String(params.command || params.cmd || "").slice(0, 60)
+          : shortPath(params.path || params.url || params.pattern || "").slice(0, 60);
+        const restoredItem = logItem(toolName, {
+          status: "ok",
+          toolName,
+          target,
+          bodyText: content.slice(match?.[0]?.length || 0),
+        });
+        restoredItem.setStatus("ok");
+      }
+    }
+    if (record.draft?.text) {
+      const partial = completedRichMessage(record.draft.text);
+      partial.classList.add("interrupted-response");
+      partial.title = "Bu yanıt tamamlanmadan kesildi; provider geçmişine eklenmedi.";
+    }
+  } finally {
+    logRenderTarget = logEl;
+  }
+  logEl.appendChild(fragment);
+  updateCtxGauge(conversationHistory, null);
+}
+
+async function resumeSession(id) {
+  if (activeRequestId) throw new Error("Aktif yanıt sürerken oturum değiştirilemez");
+  const record = await invoke("load_session", { id });
+  const restored = runtimeConfigForProvider(record.provider);
+  if (restored) {
+    configCache = {
+      ...restored,
+      model: record.model || restored.model,
+      contextLimit: record.contextLimit ?? restored.contextLimit,
+      contextRatio: record.contextRatio ?? restored.contextRatio,
+    };
+    const providerEntry = linkedProviderById(record.provider);
+    if (providerEntry && record.model) providerEntry.model = record.model;
+    await invoke("save_config", { config: configCache });
+    persistConfigCache();
+    providerNameCache = PROVIDER_REGISTRY[record.provider]?.name || record.provider;
+  } else if (configCache && record.provider === configCache.provider) {
+    configCache.model = record.model || configCache.model;
+    configCache.contextLimit = record.contextLimit ?? configCache.contextLimit;
+    configCache.contextRatio = record.contextRatio ?? configCache.contextRatio;
+    await invoke("save_config", { config: configCache });
+    persistConfigCache();
+  }
+  currentSession = normalizeSessionIntelligence(record);
+  conversationHistory = Array.isArray(record.messages) ? record.messages : [];
+  apiCallCount = Number(currentSession.usage.apiCalls || 0);
+  updateModelChip(record.model || configCache?.model || "model");
+  renderSession(record);
+}
+
+async function newSession() {
+  if (activeRequestId) await stopActiveStream();
+  currentSession = null;
+  conversationHistory = [];
+  logEl.innerHTML = "";
+  updateCtxGauge([], null);
+  cmdInput.focus();
+}
+
+async function stopActiveStream() {
+  if (!activeRequestId) return false;
+  const id = activeRequestId;
+  try { return await invoke("cancel_chat_stream", { requestId: id }); }
+  catch (error) { renderAlert("durdurma: " + safeError(error)); return false; }
+}
+
+if (streamStop) streamStop.addEventListener("click", stopActiveStream);
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || !activeRequestId) return;
+  event.preventDefault();
+  event.stopPropagation();
+  void stopActiveStream();
+}, true);
 
 if (cmdInput) {
   cmdInput.addEventListener("keydown", async (ev) => {
     if (suggestMode === "models" || suggestMode === "providers" || suggestMode === "mode") {
-      if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+      if (moveSuggestSelection(ev.key)) {
         ev.preventDefault();
-        suggestIndex = (suggestIndex + (ev.key === "ArrowDown" ? 1 : -1) + suggestItems.length) % suggestItems.length;
-        updateActiveItem();
         return;
       }
       if (ev.key === "Enter") { ev.preventDefault(); await applySuggest(suggestIndex); return; }
@@ -1018,10 +2999,8 @@ if (cmdInput) {
     }
 
     if (suggestMode === "commands") {
-      if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+      if (moveSuggestSelection(ev.key)) {
         ev.preventDefault();
-        suggestIndex = (suggestIndex + (ev.key === "ArrowDown" ? 1 : -1) + suggestItems.length) % suggestItems.length;
-        updateActiveItem();
         return;
       }
       if (ev.key === "Enter") {
@@ -1051,12 +3030,14 @@ if (cmdInput) {
       if (cmd.trim().startsWith("/")) {
         cmdHistory.push(cmd);
         historyIdx = -1;
+        followOutput = true;
         hideSuggest();
         await runCommand(cmd);
         cmdInput.value = "";
       } else {
         cmdHistory.push(cmd);
         historyIdx = -1;
+        followOutput = true;
         userBlock(cmd);
         cmdInput.value = "";
         await sendChat(cmd);
@@ -1081,7 +3062,7 @@ if (cmdInput) {
   });
 
   cmdInput.addEventListener("keyup", (ev) => {
-    if (ev.key === "Enter" || ev.key === "ArrowUp" || ev.key === "ArrowDown" || ev.key === "Escape") return;
+    if (["Enter", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown", "Escape"].includes(ev.key)) return;
     updateSuggestions();
   });
 }
@@ -1095,7 +3076,7 @@ async function applySuggest(index) {
     cmdInput.focus();
   } else if (suggestMode === "models") {
     hideSuggest();
-    await selectModel(item.providerId, item.id);
+    await selectModel(item.providerId, item.id, item.displayName);
   } else if (suggestMode === "providers") {
     hideSuggest();
     openApiModal(item);
@@ -1147,6 +3128,14 @@ const apprRisk = document.getElementById("appr-risk");
 const apprDetail = document.getElementById("appr-detail");
 const apprEdit = document.getElementById("appr-edit");
 const apprEditInput = document.getElementById("appr-edit-input");
+const approvalVisibility = createVisibilityController(uiMotion, {
+  root: approvalModal,
+  surface: approvalModal.querySelector(".approval-window"),
+  openDuration: UI_MOTION.fast,
+  surfaceOpenDuration: UI_MOTION.dialog,
+  closeDuration: UI_MOTION.fast,
+  surfaceCloseDuration: UI_MOTION.fast,
+});
 
 function wordDiff(oldText, newText) {
   const o = String(oldText || "");
@@ -1271,7 +3260,12 @@ function showApproval(toolId, params, risk) {
     apprRisk.className = "approval-risk risk-" + risk;
     apprDetail.innerHTML = buildToolDetailHtml(toolId, params);
     apprEdit.style.display = "none";
-    approvalModal.style.display = "flex";
+    void approvalVisibility.open();
+    revealMenuContent(approvalModal, ".approval-header, .approval-detail, .approval-hint", {
+      delay: 55,
+      stagger: 28,
+      maxItems: 4,
+    });
     cmdInput.disabled = true;
     startCountdown();
   });
@@ -1279,7 +3273,7 @@ function showApproval(toolId, params, risk) {
 
 function closeApproval() {
   stopCountdown();
-  approvalModal.style.display = "none";
+  void approvalVisibility.close();
   pendingApproval = null;
   cmdInput.disabled = false;
 }
@@ -1505,84 +3499,177 @@ async function processToolItem(call) {
 // ===== NATIVE CHAT — ReAct döngüsü =====
 async function sendChat(message) {
   if (!invoke) return;
-  cmdInput.disabled = true;
+  if (!TauriChannel) {
+    renderAlert("Bu Tauri sürümü streaming Channel desteği sunmuyor.");
+    return;
+  }
+  cmdInput.readOnly = true;
   setAgentState("working");
   try {
     const config = await invoke("get_config");
     if (!config) {
-      cmdInput.disabled = false;
       cmdInput.focus();
-        return;
+      return;
     }
+    configCache = upgradeProviderConfig(config);
     let homeDir = "";
     try {
       homeDir = await invoke("home");
       HOME_DIR = homeDir;
     } catch (e) {}
 
-    let history = [
-      { role: "system", content: buildSystemPrompt(config, homeDir) },
-      { role: "user", content: message },
-    ];
+    await ensureSession(message);
+    conversationHistory.push({ role: "user", content: message });
+    await checkpointSession(null, "active");
     const maxTurns = 12;
-    const isShortPrompt = message.trim().length < 24;
 
     for (let turn = 0; turn < maxTurns; turn++) {
-      if (!isShortPrompt && estimateTokens(history) > compactThresholdFor(config)) {
-        history = compactHistory(history);
-        logLine("[SYSTEM: bağlam sıkıştırıldı — eski çıktılar özetlendi]", "sys");
+      let history = effectiveRequestHistory(configCache, homeDir);
+      if (shouldAutoCompact(history)) {
+        const compacted = await performCompaction("auto", homeDir);
+        if (compacted.compacted) {
+          logLine(`bağlam otomatik sıkıştırıldı · ${fmtK(compacted.before)} → ${fmtK(compacted.after)} token`, "sys");
+          history = effectiveRequestHistory(configCache, homeDir);
+        }
       }
 
-      countApiCall(); // LLM isteği — limit sayacı
-      const reply = await invoke("chat_completion", { config, messages: history });
+      countApiCall();
+      const turnRequestId = requestId();
+      activeRequestId = turnRequestId;
+      if (streamActions) streamActions.hidden = false;
+      lastStreamSequence = 0;
+      activeStreamRenderer = null;
+      let streamedReasoning = "";
+      const providerRequestStartedAt = performance.now();
+      let providerElapsedMs = null;
+      const onEvent = new TauriChannel();
+      onEvent.onmessage = (packet) => {
+        const event = packet?.event;
+        const data = packet?.data || {};
+        const sequence = Number(data.sequence || 0);
+        if (activeRequestId !== turnRequestId || sequence <= lastStreamSequence) return;
+        lastStreamSequence = sequence;
+        if (event === "textDelta") {
+          if (!activeStreamRenderer) activeStreamRenderer = createStreamRenderer();
+          activeStreamRenderer.append(data.delta || "");
+          scheduleDraftCheckpoint({
+            requestId: turnRequestId,
+            text: activeStreamRenderer.text,
+            reasoning: streamedReasoning,
+            startedAt: Date.now(),
+          });
+        } else if (event === "reasoningDelta") {
+          streamedReasoning += String(data.delta || "");
+        } else if (event === "completed") {
+          providerElapsedMs = Number(data.elapsedMs || 0);
+        }
+      };
+
+      let reply;
+      try {
+        reply = await invoke("chat_completion_stream", {
+          config: configCache,
+          messages: history,
+          requestId: turnRequestId,
+          onEvent,
+        });
+        setConnectionOnline(true);
+      } catch (error) {
+        if (isNetworkFailure(error)) setConnectionOnline(false);
+        const cancelled = String(error).toLowerCase().includes("durduruldu");
+        if (activeStreamRenderer) activeStreamRenderer.interrupt();
+        await checkpointSession(activeStreamRenderer?.text ? {
+          requestId: turnRequestId,
+          text: activeStreamRenderer.text,
+          reasoning: streamedReasoning,
+          startedAt: Date.now(),
+        } : null, "interrupted");
+        if (!cancelled) throw error;
+        logLine("yanıt durduruldu", "sys");
+        break;
+      } finally {
+        if (activeRequestId === turnRequestId) activeRequestId = null;
+        if (streamActions) streamActions.hidden = true;
+      }
+      if (checkpointTimer) { clearTimeout(checkpointTimer); checkpointTimer = null; }
+      const observation = createProviderObservation(
+        configCache,
+        reply,
+        providerElapsedMs || (performance.now() - providerRequestStartedAt),
+      );
+      if (currentSession) {
+        normalizeSessionIntelligence(currentSession);
+        currentSession.usage.lastRequest = observation;
+      }
+      recordReplyUsage(reply, history);
       updateCtxGauge(history, reply);
 
       const text = String(reply.text || "");
       const toolCalls = reply.tool_calls || [];
       let progressEl = null;
 
-      // Ara açıklamalar (tool çağrısı olan tur) → kart dışında sönük canlı akış
-      if (text.trim() && toolCalls.length > 0) {
-        progressEl = await typeText(text, "ai-step");
-      }
-
-      // Nihai yanıt (tool yok) — üst boşlukla, normal parlaklıkta
-      if (text.trim() && toolCalls.length === 0) {
+      if (activeStreamRenderer) {
+        progressEl = await activeStreamRenderer.finish(toolCalls.length > 0 ? "step" : "final");
+      } else if (text.trim() && toolCalls.length > 0) {
+        progressEl = await animatedRichMessage(text, "ai-step");
+      } else if (text.trim()) {
         const gap = document.createElement("div");
         gap.className = "final-gap";
-        logEl.appendChild(gap);
-        await typeText(text, "assistant-response");
+        appendLogElement(gap);
+        await animatedRichMessage(text, "assistant-response");
+      }
+
+      if (text.trim() || toolCalls.length > 0) {
+        conversationHistory.push({
+          role: "assistant",
+          content: text,
+          toolCalls: toolCalls.map((call) => ({
+            id: call.id,
+            name: call.name,
+            arguments: call.arguments,
+            thoughtSignature: call.thoughtSignature || null,
+          })),
+          reasoningContent: reply.reasoning || null,
+          thinkingSignature: reply.thinking_signature || null,
+        });
+        await checkpointSession(null, "active");
       }
 
       if (toolCalls.length === 0) {
+        void generateSmartSessionTitle(message, text);
         break;
       }
 
-      const results = [];
-      for (const call of toolCalls) {
-        const res = await processToolItem(call);
-        results.push("[tool:" + call.name + "] " + (res || ""));
-      }
+      const canParallelizeReads = toolCalls.length > 1
+        && configCache?.mode !== "strict"
+        && toolCalls.every((call) => TOOL_RISKS[call.name] === "low");
+      const rawResults = canParallelizeReads
+        ? await Promise.all(toolCalls.map((call) => processToolItem(call)))
+        : await (async () => {
+            const ordered = [];
+            for (const call of toolCalls) ordered.push(await processToolItem(call));
+            return ordered;
+          })();
+      const results = rawResults.map((result, index) =>
+        "[tool:" + toolCalls[index].name + "] " + (result || "")
+      );
       if (progressEl) progressEl.classList.add("complete");
 
-      history.push({
-        role: "assistant",
-        content: text || "",
-        toolCalls: toolCalls.map((c) => ({
-          id: c.id,
-          name: c.name,
-          arguments: c.arguments,
-          thoughtSignature: c.thoughtSignature || null,
-        })),
-      });
       for (let i = 0; i < toolCalls.length; i++) {
-        history.push({ role: "tool", toolCallId: toolCalls[i].id, content: results[i] || "" });
+        conversationHistory.push({ role: "tool", toolCallId: toolCalls[i].id, content: results[i] || "" });
       }
+      await checkpointSession(null, "active");
     }
+    if (currentSession?.status !== "interrupted") await checkpointSession(null, "complete");
   } catch (e) {
+    if (isNetworkFailure(e)) setConnectionOnline(false);
     renderAlert("hata: " + e);
   } finally {
-    cmdInput.disabled = false;
+    if (checkpointTimer) { clearTimeout(checkpointTimer); checkpointTimer = null; }
+    activeRequestId = null;
+    activeStreamRenderer = null;
+    cmdInput.readOnly = false;
+    if (streamActions) streamActions.hidden = true;
     setAgentState("ready");
     cmdInput.focus();
   }
@@ -1606,36 +3693,69 @@ async function runCommand(cmd) {
         break;
 
       case "provider":
-        await openProviderMenu();
+        if (!args[0]) {
+          await openProviderMenu();
+        } else if (args[0] === "test" && args[1]) {
+          await testLinkedProvider(args[1]);
+        } else if (args[0] === "reconnect" && args[1]) {
+          await reconnectProvider(args[1]);
+        } else if (args[0] === "remove" && args[1]) {
+          await removeLinkedProvider(args[1]);
+        } else {
+          logLine("kullanım: /provider [test|reconnect|remove] <id>", "sys");
+        }
+        break;
+
+      case "diagnostics":
+      case "doctor":
+        await openDiagnosticsMenu();
         break;
 
       case "permissions":
         openModeMenu();
         break;
 
-      case "context":
-        if (args[0]) {
-          const val = parseFloat(args[0].replace(",", "."));
-          if (!isNaN(val) && val > 0 && val <= 1) {
-            if (!configCache) configCache = {};
-            configCache.contextRatio = val;
-            persistConfigCache();
-            try { await invoke("save_config", { config: configCache }); } catch (e) {}
-            logLine("context oranı: " + val + " (" + Math.round(val * 100) + "%) — eşik: " + Math.floor(contextLimitOf(configCache) * val), "ok");
-          } else if (!isNaN(val) && val >= 8000 && val <= 4000000) {
-            if (!configCache) configCache = {};
-            configCache.contextLimit = Math.floor(val);
-            persistConfigCache();
-            try { await invoke("save_config", { config: configCache }); } catch (e) {}
-            logLine("context limit: " + Math.floor(val) + " — eşik: " + Math.floor(val * contextRatioOf(configCache)), "ok");
-          } else {
-            logLine("geçersiz — 0-1 arası oran (0.8 = %80) veya 8000-4000000 arası limit girin", "err");
-          }
-        } else {
-          const limit = contextLimitOf(configCache);
-          const ratio = contextRatioOf(configCache);
-          logLine("context: limit " + limit + " · oran " + ratio + " (%" + Math.round(ratio * 100) + ") · eşik " + Math.floor(limit * ratio) + " — /context 0.8 veya /context 1000000 ile değiştirilebilir", "dim");
+      case "status":
+        renderSessionStatus();
+        break;
+
+      case "compact": {
+        if (activeRequestId) {
+          logLine("aktif yanıt sürerken compact başlatılamaz", "err");
+          break;
         }
+        cmdInput.readOnly = true;
+        setAgentState("working");
+        try {
+          let homeDir = HOME_DIR;
+          if (!homeDir) {
+            try { homeDir = await invoke("home"); } catch (error) {}
+          }
+          const result = await performCompaction("manual", homeDir || "");
+          if (!result.compacted) logLine(result.reason, "dim");
+          else logLine(`compact tamamlandı · ${fmtK(result.before)} → ${fmtK(result.after)} · ${fmtK(result.saved)} token kazanıldı`, "ok");
+        } finally {
+          cmdInput.readOnly = false;
+          setAgentState("ready");
+          cmdInput.focus();
+        }
+        break;
+      }
+
+      case "sessions":
+        await openSessionsMenu();
+        break;
+
+      case "new":
+        await newSession();
+        break;
+
+      case "resume":
+        await openSessionsMenu();
+        break;
+
+      case "delete-session":
+        await openDeleteSessionsMenu();
         break;
 
       case "undo":
@@ -1669,13 +3789,17 @@ async function init() {
     openModal("providers");
     return;
   }
+  await hydrateProviderRegistry();
+  configCache = upgradeProviderConfig(configCache);
   try {
-    const config = await invoke("get_config");
+    const config = upgradeProviderConfig(await invoke("get_config"));
     try { HOME_DIR = await invoke("home"); } catch (e) {}
-    const hasConfig = config && config.apiKey;
+    const providerMeta = config ? PROVIDER_REGISTRY[config.provider] : null;
+    const hasConfig = config && config.provider && hasProviderCredential(config, providerMeta);
     if (hasConfig) {
       isInitialized = true;
       configCache = config;
+      try { await invoke("save_config", { config }); } catch (e) {}
       persistConfigCache();
       updateModelChip(config.model);
       const p = PROVIDER_REGISTRY[config.provider];
@@ -1689,7 +3813,8 @@ async function init() {
         updatePath("~");
       }
     } else {
-      if (configCache && configCache.apiKey) {
+      const cachedProvider = configCache ? PROVIDER_REGISTRY[configCache.provider] : null;
+      if (configCache && hasProviderCredential(configCache, cachedProvider)) {
         isInitialized = true;
         updateModelChip(configCache.model);
         const p = PROVIDER_REGISTRY[configCache.provider];
@@ -1700,7 +3825,8 @@ async function init() {
       }
     }
   } catch (e) {
-    if (configCache && configCache.apiKey) {
+    const cachedProvider = configCache ? PROVIDER_REGISTRY[configCache.provider] : null;
+    if (configCache && hasProviderCredential(configCache, cachedProvider)) {
       isInitialized = true;
       updateModelChip(configCache.model);
       const p = PROVIDER_REGISTRY[configCache.provider];
@@ -1710,6 +3836,27 @@ async function init() {
       openModal("providers");
     }
   }
+  if (isInitialized) {
+    try {
+      const latest = await invoke("latest_session");
+      if (latest) {
+        await resumeSession(latest.id);
+      }
+    } catch (error) {
+      logLine("oturum geçmişi yüklenemedi: " + safeError(error), "sys");
+    }
+  }
 }
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "hidden") return;
+  suggestVisibility.finish();
+  modalVisibility.finish();
+  apiVisibility.finish();
+  sessionDeleteVisibility.finish();
+  statusVisibility.finish();
+  diagnosticsVisibility.finish();
+  approvalVisibility.finish();
+});
 
 init();
