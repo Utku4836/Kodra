@@ -21,9 +21,9 @@ impl StreamManager {
         let mut active = self
             .active
             .lock()
-            .map_err(|_| "Stream kilidi kullanılamıyor")?;
+            .map_err(|_| "Stream lock is unavailable")?;
         if active.contains_key(request_id) {
-            return Err("Bu stream kimliği zaten kullanımda".to_string());
+            return Err("This stream ID is already in use".to_string());
         }
         let cancelled = Arc::new(AtomicBool::new(false));
         active.insert(request_id.to_string(), cancelled.clone());
@@ -35,7 +35,7 @@ impl StreamManager {
         let active = self
             .active
             .lock()
-            .map_err(|_| "Stream kilidi kullanılamıyor")?;
+            .map_err(|_| "Stream lock is unavailable")?;
         Ok(active
             .get(request_id)
             .map(|flag| {
@@ -59,7 +59,7 @@ fn validate_request_id(value: &str) -> Result<(), String> {
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
     {
-        return Err("Geçersiz stream kimliği".to_string());
+        return Err("Invalid stream ID".to_string());
     }
     Ok(())
 }
@@ -139,7 +139,7 @@ fn read_sse<R: Read, F: FnMut(SseFrame) -> Result<bool, String>>(
         };
 
     for line in BufReader::new(reader).lines() {
-        let line = line.map_err(|error| format!("Stream okuma hatası: {error}"))?;
+        let line = line.map_err(|error| format!("Stream read error: {error}"))?;
         let line = line.trim_end_matches('\r');
         if line.is_empty() {
             if !dispatch(&mut event, &mut data)? {
@@ -201,7 +201,7 @@ impl Emitter {
         self.sequence = self.sequence.saturating_add(1);
         self.channel
             .send(build(self.sequence))
-            .map_err(|_| "Arayüz stream kanalı kapandı".to_string())
+            .map_err(|_| "UI stream channel closed".to_string())
     }
 
     fn text(&mut self, delta: &str) -> Result<(), String> {
@@ -441,7 +441,7 @@ fn parse_anthropic(value: &Value, acc: &mut Accumulator, out: &mut Emitter) -> R
                 .pointer("/error/type")
                 .and_then(Value::as_str)
                 .unwrap_or("stream_error");
-            return Err(format!("Anthropic stream hatası: {kind}"));
+            return Err(format!("Anthropic stream error: {kind}"));
         }
         _ => {}
     }
@@ -579,7 +579,7 @@ pub(crate) fn consume(
             return Ok(false);
         }
         let value: Value = serde_json::from_str(&frame.data)
-            .map_err(|error| format!("Geçersiz SSE JSON verisi: {error}"))?;
+            .map_err(|error| format!("Invalid SSE JSON data: {error}"))?;
         match protocol {
             crate::providers::ProviderProtocol::OpenAiChat => {
                 parse_openai(&value, &mut acc, &mut out)?
@@ -604,7 +604,7 @@ pub(crate) fn consume(
     }
     if did_cancel || cancelled.load(Ordering::Acquire) {
         out.send(|sequence| StreamEvent::Cancelled { sequence })?;
-        return Err("İstek kullanıcı tarafından durduruldu".to_string());
+        return Err("Request cancelled by user".to_string());
     }
     let mut tools = Vec::new();
     for tool in acc.tools.into_iter().filter(|tool| !tool.name.is_empty()) {
@@ -612,7 +612,7 @@ pub(crate) fn consume(
             Some(value) => value,
             None if tool.arguments.trim().is_empty() => serde_json::json!({}),
             None => serde_json::from_str(&tool.arguments)
-                .map_err(|_| format!("{} aracı için tamamlanmamış JSON argümanı", tool.name))?,
+                .map_err(|_| format!("Incomplete JSON arguments for tool {}", tool.name))?,
         };
         tools.push(ToolCallData {
             id: tool.id,

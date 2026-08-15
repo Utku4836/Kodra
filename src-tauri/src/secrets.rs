@@ -40,7 +40,7 @@ pub fn provider_reference(provider_id: &str) -> Result<String, String> {
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
     {
-        return Err("Geçersiz provider kimliği".to_string());
+        return Err("Invalid provider ID".to_string());
     }
     Ok(format!("{}{}", SECRET_PREFIX, normalized))
 }
@@ -48,10 +48,10 @@ pub fn provider_reference(provider_id: &str) -> Result<String, String> {
 pub fn validate_reference(secret_ref: &str) -> Result<(), String> {
     let provider = secret_ref
         .strip_prefix(SECRET_PREFIX)
-        .ok_or_else(|| "Geçersiz secret reference".to_string())?;
+        .ok_or_else(|| "Invalid secret reference".to_string())?;
     let expected = provider_reference(provider)?;
     if expected != secret_ref {
-        return Err("Geçersiz secret reference".to_string());
+        return Err("Invalid secret reference".to_string());
     }
     Ok(())
 }
@@ -59,38 +59,38 @@ pub fn validate_reference(secret_ref: &str) -> Result<(), String> {
 fn entry(secret_ref: &str) -> Result<Entry, String> {
     validate_reference(secret_ref)?;
     Entry::new(CREDENTIAL_SERVICE, secret_ref)
-        .map_err(|_| "Windows Credential Manager kullanılamıyor".to_string())
+        .map_err(|_| "Windows Credential Manager is unavailable".to_string())
 }
 
 pub fn store(secret_ref: &str, bundle: &SecretBundle) -> Result<(), String> {
     let _guard = CREDENTIAL_LOCK
         .lock()
-        .map_err(|_| "Credential Manager kilidi alınamadı".to_string())?;
+        .map_err(|_| "Could not acquire Credential Manager lock".to_string())?;
     let payload = serde_json::to_string(bundle)
-        .map_err(|_| "Güvenli kimlik bilgisi hazırlanamadı".to_string())?;
+        .map_err(|_| "Could not prepare secure credentials".to_string())?;
     entry(secret_ref)?
         .set_password(&payload)
-        .map_err(|_| "Kimlik bilgisi Windows Credential Manager'a yazılamadı".to_string())
+        .map_err(|_| "Could not write credentials to Windows Credential Manager".to_string())
 }
 
 pub fn read(secret_ref: &str) -> Result<SecretBundle, String> {
     let _guard = CREDENTIAL_LOCK
         .lock()
-        .map_err(|_| "Credential Manager kilidi alınamadı".to_string())?;
+        .map_err(|_| "Could not acquire Credential Manager lock".to_string())?;
     let payload = entry(secret_ref)?
         .get_password()
-        .map_err(|_| "Kayıtlı kimlik bilgisi bulunamadı; providerı yeniden bağlayın".to_string())?;
+        .map_err(|_| "Stored credentials were not found; reconnect the provider".to_string())?;
     serde_json::from_str(&payload)
-        .map_err(|_| "Kayıtlı kimlik bilgisi bozuk; providerı yeniden bağlayın".to_string())
+        .map_err(|_| "Stored credentials are corrupted; reconnect the provider".to_string())
 }
 
 pub fn delete(secret_ref: &str) -> Result<(), String> {
     let _guard = CREDENTIAL_LOCK
         .lock()
-        .map_err(|_| "Credential Manager kilidi alınamadı".to_string())?;
+        .map_err(|_| "Could not acquire Credential Manager lock".to_string())?;
     match entry(secret_ref)?.delete_credential() {
         Ok(()) | Err(Error::NoEntry) => Ok(()),
-        Err(_) => Err("Kimlik bilgisi Windows Credential Manager'dan silinemedi".to_string()),
+        Err(_) => Err("Could not delete credentials from Windows Credential Manager".to_string()),
     }
 }
 

@@ -1932,7 +1932,7 @@ body {
   font: 600 15px/1 var(--font-mono);
   pointer-events: none;
   user-select: none;
-  text-shadow: 0 0 10px rgba(255, 255, 255, 0.14);
+  text-shadow: none;
 }
 
 .menu-selection-chevron[hidden] { display: none; }

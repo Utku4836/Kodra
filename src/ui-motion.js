@@ -239,18 +239,13 @@ export function createSelectionController(runtime, options) {
     const targetY = next.offsetTop + next.offsetHeight / 2;
     const targetTransform = `translate3d(0, ${targetY}px, 0) translateY(-50%)`;
     marker.hidden = false;
-    if (activeIndex < 0 || motionOptions.immediate || runtime.reducedMotion()) {
-      runtime.cancel(marker);
-      marker.style.opacity = "1";
-      marker.style.transform = targetTransform;
-    } else if (activeIndex !== index) {
-      const current = computedFrame(marker);
-      marker.style.transform = targetTransform;
-      void runtime.play(marker, [
-        { opacity: current.opacity, transform: current.transform },
-        { opacity: 1, transform: targetTransform },
-      ], { duration: UI_MOTION.select, easing: UI_EASING.select });
-    }
+    // Do not interpolate a text glyph across rows. Under fast key repeat the
+    // compositor can retain several rasterized chevron frames, which looks like
+    // duplicated markers. Selection remains fluid through the row highlight,
+    // while the single marker snaps deterministically to the active row.
+    runtime.cancel(marker);
+    marker.style.opacity = "1";
+    marker.style.transform = targetTransform;
     activeIndex = index;
     return next;
   }

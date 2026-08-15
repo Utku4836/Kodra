@@ -94,7 +94,7 @@ fn json_number(value: Option<&serde_json::Value>) -> Option<f64> {
 fn money(value: Option<f64>) -> String {
     value
         .map(|amount| format!("${amount:.4}"))
-        .unwrap_or_else(|| "sınırsız".to_string())
+        .unwrap_or_else(|| "unlimited".to_string())
 }
 
 fn check(
@@ -125,15 +125,20 @@ fn classify_diagnostic_message(message: &str) -> DiagnosticFault {
         DiagnosticFault {
             kind: "rate_limited",
             state: "rate_limited",
-            action: "Limit penceresinin yenilenmesini bekleyip tekrar deneyin.",
+            action: "Wait for the rate-limit window to reset, then try again.",
         }
-    } else if lower.contains("402") || lower.contains("yetersiz kredi") {
+    } else if lower.contains("402")
+        || lower.contains("insufficient credit")
+        || lower.contains("yetersiz kredi")
+    {
         DiagnosticFault {
             kind: "billing",
             state: "failed",
-            action: "Provider bakiyesini veya harcama sınırını kontrol edin.",
+            action: "Check the provider balance or spending limit.",
         }
-    } else if lower.contains("yetki")
+    } else if lower.contains("authentication")
+        || lower.contains("credential")
+        || lower.contains("yetki")
         || lower.contains("kimlik bilgisi")
         || lower.contains("401")
         || lower.contains("403")
@@ -141,19 +146,20 @@ fn classify_diagnostic_message(message: &str) -> DiagnosticFault {
         DiagnosticFault {
             kind: "authentication",
             state: "failed",
-            action: "API anahtarını veya provider kimlik doğrulama ayarını yenileyin.",
+            action: "Refresh the API key or provider authentication settings.",
         }
     } else if lower.contains("404") || lower.contains("bulunamad") {
         DiagnosticFault {
             kind: "not_found",
             state: "failed",
-            action: "Model ve endpoint yolunu kontrol edip kataloğu yenileyin.",
+            action: "Check the model and endpoint path, then refresh the catalog.",
         }
-    } else if lower.contains("zaman aş") || lower.contains("timeout") {
+    } else if lower.contains("zaman aş") || lower.contains("timeout") || lower.contains("timed out")
+    {
         DiagnosticFault {
             kind: "timeout",
             state: "offline",
-            action: "Ağ bağlantısını ve provider timeout ayarını kontrol edin.",
+            action: "Check the network connection and provider timeout setting.",
         }
     } else if lower.contains("bağlantı hatası")
         || lower.contains("connection")
@@ -162,11 +168,13 @@ fn classify_diagnostic_message(message: &str) -> DiagnosticFault {
         DiagnosticFault {
             kind: "network",
             state: "offline",
-            action: "Ağ, DNS ve provider adresini kontrol edin.",
+            action: "Check the network, DNS, and provider address.",
         }
     } else if lower.contains("498")
         || lower.contains("502")
         || lower.contains("503")
+        || lower.contains("server overloaded")
+        || lower.contains("server error")
         || lower.contains("sunucu yükü")
         || lower.contains("sunucu hatası")
         || lower.contains("5xx")
@@ -174,13 +182,13 @@ fn classify_diagnostic_message(message: &str) -> DiagnosticFault {
         DiagnosticFault {
             kind: "provider_unavailable",
             state: "offline",
-            action: "Provider durumunu kontrol edip kısa süre sonra tekrar deneyin.",
+            action: "Check the provider status and try again shortly.",
         }
     } else {
         DiagnosticFault {
             kind: "request",
             state: "failed",
-            action: "Provider, model, protokol ve özel endpoint ayarlarını kontrol edin.",
+            action: "Check the provider, model, protocol, and custom endpoint settings.",
         }
     }
 }
@@ -271,9 +279,9 @@ fn run(config: AppConfig, deep: bool) -> ProviderDiagnosticReport {
         Ok(secret) => {
             report.checks.push(check(
                 "credentials",
-                "Kimlik bilgisi",
+                "Credentials",
                 "healthy",
-                "Güvenli kasadaki provider kimlik bilgisi kullanılabilir.",
+                "Provider credentials are available in the secure vault.",
                 None,
                 None,
             ));
@@ -284,7 +292,7 @@ fn run(config: AppConfig, deep: bool) -> ProviderDiagnosticReport {
             report.error_kind = Some(fault.kind.to_string());
             report.checks.push(check(
                 "credentials",
-                "Kimlik bilgisi",
+                "Credentials",
                 fault.state,
                 message,
                 Some(fault.action),
@@ -292,18 +300,18 @@ fn run(config: AppConfig, deep: bool) -> ProviderDiagnosticReport {
             ));
             report.checks.push(skipped(
                 "models",
-                "Model kataloğu",
-                "Kimlik bilgisi doğrulanamadığı için çalıştırılmadı.",
+                "Model catalog",
+                "Skipped because credentials could not be verified.",
             ));
             report.checks.push(skipped(
                 "chat",
                 "Chat endpoint",
-                "Kimlik bilgisi doğrulanamadığı için çalıştırılmadı.",
+                "Skipped because credentials could not be verified.",
             ));
             report.checks.push(skipped(
                 "tools",
-                "Araç desteği",
-                "Provider bağlantısı doğrulanamadı.",
+                "Tool support",
+                "Provider connection could not be verified.",
             ));
             report.overall = overall_state(&report.checks, report.error_kind.as_deref());
             return report;
@@ -332,18 +340,18 @@ fn run(config: AppConfig, deep: bool) -> ProviderDiagnosticReport {
             ));
             report.checks.push(skipped(
                 "models",
-                "Model kataloğu",
-                "Endpoint yapılandırması geçersiz.",
+                "Model catalog",
+                "Endpoint configuration is invalid.",
             ));
             report.checks.push(skipped(
                 "chat",
                 "Chat endpoint",
-                "Endpoint yapılandırması geçersiz.",
+                "Endpoint configuration is invalid.",
             ));
             report.checks.push(skipped(
                 "tools",
-                "Araç desteği",
-                "Endpoint yapılandırması geçersiz.",
+                "Tool support",
+                "Endpoint configuration is invalid.",
             ));
             report.overall = overall_state(&report.checks, report.error_kind.as_deref());
             return report;
@@ -371,29 +379,29 @@ fn run(config: AppConfig, deep: bool) -> ProviderDiagnosticReport {
             report.recommended_model = providers::recommended_model(&config.provider, &models);
             report.checks.push(check(
                 "authentication",
-                "Provider yetkisi",
+                "Provider authorization",
                 "healthy",
-                "Provider isteği kimlik doğrulamasını geçti.",
+                "The provider request passed authentication.",
                 None,
                 Some(catalog_latency),
             ));
             report.checks.push(check(
                 "models",
-                "Model kataloğu",
+                "Model catalog",
                 if models.is_empty() {
                     "degraded"
                 } else {
                     "healthy"
                 },
                 if models.is_empty() {
-                    "Endpoint yanıt verdi ancak agent kullanımına uygun model bulunamadı."
+                    "The endpoint responded, but no model compatible with agent use was found."
                         .to_string()
                 } else {
-                    format!("{} güncel agent modeli doğrulandı.", models.len())
+                    format!("{} current agent models verified.", models.len())
                 },
                 models
                     .is_empty()
-                    .then_some("Provider kataloğunu ve model filtrelerini kontrol edin."),
+                    .then_some("Check the provider catalog and model filters."),
                 Some(catalog_latency),
             ));
             models
@@ -403,7 +411,7 @@ fn run(config: AppConfig, deep: bool) -> ProviderDiagnosticReport {
             report.error_kind = Some(fault.kind.to_string());
             report.checks.push(check(
                 "authentication",
-                "Provider yetkisi",
+                "Provider authorization",
                 fault.state,
                 message.clone(),
                 Some(fault.action),
@@ -411,18 +419,18 @@ fn run(config: AppConfig, deep: bool) -> ProviderDiagnosticReport {
             ));
             report.checks.push(skipped(
                 "models",
-                "Model kataloğu",
-                "Provider isteği başarısız olduğu için katalog okunamadı.",
+                "Model catalog",
+                "The catalog could not be read because the provider request failed.",
             ));
             report.checks.push(skipped(
                 "chat",
                 "Chat endpoint",
-                "Model kataloğu doğrulanamadı.",
+                "The model catalog could not be verified.",
             ));
             report.checks.push(skipped(
                 "tools",
-                "Araç desteği",
-                "Model kataloğu doğrulanamadı.",
+                "Tool support",
+                "The model catalog could not be verified.",
             ));
             report.overall = overall_state(&report.checks, report.error_kind.as_deref());
             return report;
@@ -450,7 +458,7 @@ fn run(config: AppConfig, deep: bool) -> ProviderDiagnosticReport {
                     "local_runtime",
                     "Ollama runtime",
                     "healthy",
-                    format!("Yerel Ollama {version} yanıt veriyor."),
+                    format!("Local Ollama {version} is responding."),
                     None,
                     Some(latency),
                 ));
@@ -460,7 +468,7 @@ fn run(config: AppConfig, deep: bool) -> ProviderDiagnosticReport {
                 "Ollama runtime",
                 "degraded",
                 message,
-                Some("Ollama servisinin çalıştığını ve yerel adresi kontrol edin."),
+                Some("Make sure Ollama is running and check the local address."),
                 Some(latency),
             )),
         }
@@ -517,15 +525,15 @@ fn run(config: AppConfig, deep: bool) -> ProviderDiagnosticReport {
                     .is_some_and(|value| value <= f64::EPSILON);
                 report.checks.push(check(
                     "account_limit",
-                    "OpenRouter hesabı",
+                    "OpenRouter account",
                     if depleted { "degraded" } else { "healthy" },
                     format!(
-                        "Kalan {} · kullanım {} · limit {}",
+                        "Remaining {} · usage {} · limit {}",
                         money(account.remaining_usd),
                         money(account.usage_usd),
                         money(account.limit_usd)
                     ),
-                    depleted.then_some("Kredi ekleyin veya hesap harcama sınırını yükseltin."),
+                    depleted.then_some("Add credit or increase the account spending limit."),
                     Some(latency),
                 ));
                 report.account = Some(account);
@@ -534,7 +542,7 @@ fn run(config: AppConfig, deep: bool) -> ProviderDiagnosticReport {
                 let fault = classify_diagnostic_message(&message);
                 report.checks.push(check(
                     "account_limit",
-                    "OpenRouter hesabı",
+                    "OpenRouter account",
                     "degraded",
                     message,
                     Some(fault.action),
@@ -547,21 +555,21 @@ fn run(config: AppConfig, deep: bool) -> ProviderDiagnosticReport {
     let selected_model = models.iter().find(|model| model.id == config.model);
     report.checks.push(check(
         "selected_model",
-        "Seçili model",
+        "Selected model",
         if config.model.is_empty() || selected_model.is_none() {
             "degraded"
         } else {
             "healthy"
         },
         if config.model.is_empty() {
-            "Henüz bir model seçilmedi.".to_string()
+            "No model has been selected yet.".to_string()
         } else if selected_model.is_none() {
-            format!("{} güncel katalogda bulunamadı.", config.model)
+            format!("{} was not found in the current catalog.", config.model)
         } else {
-            format!("{} güncel katalogla uyumlu.", config.model)
+            format!("{} is compatible with the current catalog.", config.model)
         },
         (config.model.is_empty() || selected_model.is_none())
-            .then_some("/model ile güncel bir model seçin."),
+            .then_some("Choose a current model with /model."),
         None,
     ));
 
@@ -571,18 +579,18 @@ fn run(config: AppConfig, deep: bool) -> ProviderDiagnosticReport {
             .unwrap_or(true);
     report.checks.push(check(
         "tools",
-        "Araç desteği",
+        "Tool support",
         if tool_supported {
             "ready"
         } else {
             "unsupported"
         },
         if tool_supported {
-            "Provider ve model tool calling desteği bildiriyor."
+            "The provider and model report tool-calling support."
         } else {
-            "Bu provider/model birleşimi tool calling desteği bildirmiyor."
+            "This provider/model combination does not report tool-calling support."
         },
-        (!tool_supported).then_some("Araç destekleyen başka bir model seçin."),
+        (!tool_supported).then_some("Choose another model that supports tools."),
         None,
     ));
 
@@ -591,7 +599,7 @@ fn run(config: AppConfig, deep: bool) -> ProviderDiagnosticReport {
             "chat",
             "Chat endpoint",
             "ready",
-            "Yapılandırma hazır. Faturalı probe yalnızca deep test ile çalışır.",
+            "Configuration is ready. The billable probe only runs during a deep test.",
             None,
             None,
         ));
@@ -599,7 +607,7 @@ fn run(config: AppConfig, deep: bool) -> ProviderDiagnosticReport {
         report.checks.push(skipped(
             "chat",
             "Chat endpoint",
-            "Deep test için önce bir model seçilmelidir.",
+            "Select a model before running a deep test.",
         ));
     } else {
         let started = Instant::now();
@@ -634,7 +642,7 @@ fn run(config: AppConfig, deep: bool) -> ProviderDiagnosticReport {
                             "chat",
                             "Chat endpoint",
                             "healthy",
-                            "Minimal gerçek chat probe’u başarıyla tamamlandı.",
+                            "The minimal live chat probe completed successfully.",
                             None,
                             Some(chat_latency),
                         ));
@@ -643,8 +651,11 @@ fn run(config: AppConfig, deep: bool) -> ProviderDiagnosticReport {
                         "chat",
                         "Chat endpoint",
                         "degraded",
-                        format!("Yanıt geldi ancak JSON çözümlenemedi: {}", error),
-                        Some("Provider protokol ve endpoint ayarını kontrol edin."),
+                        format!(
+                            "A response arrived, but its JSON could not be parsed: {}",
+                            error
+                        ),
+                        Some("Check the provider protocol and endpoint settings."),
                         Some(chat_latency),
                     )),
                 }
@@ -675,7 +686,7 @@ pub(crate) async fn diagnose_provider(
 ) -> Result<ProviderDiagnosticReport, String> {
     tauri::async_runtime::spawn_blocking(move || run(config, deep.unwrap_or(false)))
         .await
-        .map_err(|error| format!("Tanılama iş parçacığı hatası: {}", error))
+        .map_err(|error| format!("Diagnostics worker error: {}", error))
 }
 
 #[cfg(test)]

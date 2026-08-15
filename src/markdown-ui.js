@@ -97,7 +97,7 @@ const renderer = markdownit({
 
 renderer.validateLink = markdownLinkAllowed;
 renderer.renderer.rules.image = (tokens, index) => {
-  const alt = tokens[index].content || "Görsel";
+  const alt = tokens[index].content || "Image";
   return `<span class="md-image-placeholder">${escapeHtml(alt)}</span>`;
 };
 renderer.renderer.rules.fence = (tokens, index) => {
@@ -127,7 +127,7 @@ export function stabilizeMarkdown(value, streaming = false) {
 }
 
 export function sanitizeHtml(html, documentRef = globalThis.document) {
-  if (!documentRef?.createElement) throw new Error("DOM kullanılamıyor");
+  if (!documentRef?.createElement) throw new Error("DOM is unavailable");
   const template = documentRef.createElement("template");
   template.innerHTML = String(html || "");
   const elements = Array.from(template.content.querySelectorAll("*"));
@@ -312,7 +312,7 @@ async function copyText(value, documentRef) {
   textarea.select();
   const copied = documentRef.execCommand?.("copy");
   textarea.remove();
-  if (!copied) throw new Error("Panoya erişilemedi");
+  if (!copied) throw new Error("Clipboard is unavailable");
 }
 
 function actionButton(documentRef, label, className) {
@@ -356,24 +356,24 @@ function enhanceCodeBlocks(root, actions) {
     }
     const count = documentRef.createElement("span");
     count.className = "md-code-count";
-    count.textContent = `${lineCount} satır`;
+    count.textContent = lineCount === 1 ? "1 line" : `${lineCount} lines`;
     identity.appendChild(count);
 
     const controls = documentRef.createElement("div");
     controls.className = "md-code-actions";
-    const copy = actionButton(documentRef, "Kopyala", "md-code-action md-copy-code");
-    copy.setAttribute("aria-label", `${label.textContent} kodunu kopyala`);
+    const copy = actionButton(documentRef, "Copy", "md-code-action md-copy-code");
+    copy.setAttribute("aria-label", `Copy ${label.textContent} code`);
     copy.addEventListener("click", async () => {
       try {
         await copyText(source, documentRef);
-        copy.textContent = "Kopyalandı";
-        actions?.notify?.("Kod panoya kopyalandı");
+        copy.textContent = "Copied";
+        actions?.notify?.("Code copied to clipboard");
         (documentRef.defaultView || globalThis.window)?.setTimeout(
-          () => { copy.textContent = "Kopyala"; },
+          () => { copy.textContent = "Copy"; },
           1400,
         );
       } catch (error) {
-        actions?.notify?.("Kod kopyalanamadı");
+        actions?.notify?.("Could not copy code");
       }
     });
     controls.appendChild(copy);
@@ -381,11 +381,11 @@ function enhanceCodeBlocks(root, actions) {
     const long = lineCount > LONG_CODE_LINES || source.length > LONG_CODE_CHARS;
     if (long) {
       figure.classList.add("is-collapsed");
-      const expand = actionButton(documentRef, "Tümünü göster", "md-code-action md-expand-code");
+      const expand = actionButton(documentRef, "Show all", "md-code-action md-expand-code");
       expand.setAttribute("aria-expanded", "false");
       expand.addEventListener("click", () => {
         const collapsed = figure.classList.toggle("is-collapsed");
-        expand.textContent = collapsed ? "Tümünü göster" : "Daralt";
+        expand.textContent = collapsed ? "Show all" : "Collapse";
         expand.setAttribute("aria-expanded", String(!collapsed));
       });
       controls.prepend(expand);
@@ -402,9 +402,9 @@ function enhanceCodeBlocks(root, actions) {
 }
 
 const CALLOUTS = {
-  NOTE: ["Not", "note"], INFO: ["Bilgi", "note"], TIP: ["İpucu", "note"],
-  WARNING: ["Uyarı", "alert"], CAUTION: ["Dikkat", "alert"], ERROR: ["Hata", "alert"],
-  DANGER: ["Tehlike", "alert"], SUCCESS: ["Tamamlandı", "status"],
+  NOTE: ["Note", "note"], INFO: ["Info", "note"], TIP: ["Tip", "note"],
+  WARNING: ["Warning", "alert"], CAUTION: ["Caution", "alert"], ERROR: ["Error", "alert"],
+  DANGER: ["Danger", "alert"], SUCCESS: ["Success", "status"],
 };
 
 function enhanceCallouts(root) {
@@ -448,7 +448,7 @@ function enhanceTasks(root) {
     checkbox.setAttribute("role", "checkbox");
     checkbox.setAttribute("aria-checked", String(checked));
     checkbox.setAttribute("aria-readonly", "true");
-    checkbox.setAttribute("aria-label", checked ? "Tamamlandı" : "Tamamlanmadı");
+    checkbox.setAttribute("aria-label", checked ? "Completed" : "Not completed");
     checkbox.tabIndex = 0;
     item.prepend(checkbox);
   });
@@ -459,15 +459,15 @@ function createPathButton(documentRef, path, actions) {
   button.type = "button";
   button.className = "md-path";
   button.textContent = path;
-  button.title = "Dosya Gezgini'nde göster";
-  button.setAttribute("aria-label", `${path} yolunu Dosya Gezgini'nde göster`);
+  button.title = "Show in File Explorer";
+  button.setAttribute("aria-label", `Show ${path} in File Explorer`);
   button.addEventListener("click", async () => {
     button.disabled = true;
     try {
       await actions?.openPath?.(path);
-      actions?.notify?.("Yol açıldı");
+      actions?.notify?.("Path opened");
     } catch (error) {
-      actions?.notify?.(`Yol açılamadı: ${String(error)}`);
+      actions?.notify?.(`Could not open path: ${String(error)}`);
     } finally {
       button.disabled = false;
     }
@@ -495,12 +495,12 @@ function enhanceLinksAndPaths(root, actions) {
     anchor.rel = "noopener noreferrer";
     anchor.target = "_blank";
     const host = new URL(href).hostname.replace(/^www\./, "");
-    anchor.title = `${host} adresini sistem tarayıcısında aç`;
-    anchor.setAttribute("aria-label", `${anchor.textContent || host}, harici bağlantı`);
+    anchor.title = `Open ${host} in the system browser`;
+    anchor.setAttribute("aria-label", `${anchor.textContent || host}, external link`);
     anchor.addEventListener("click", async (event) => {
       event.preventDefault();
       try { await actions?.openExternal?.(href); }
-      catch (error) { actions?.notify?.(`Bağlantı açılamadı: ${String(error)}`); }
+      catch (error) { actions?.notify?.(`Could not open link: ${String(error)}`); }
     });
   });
 }
@@ -514,7 +514,7 @@ function enhanceTables(root) {
     wrap.className = "md-table-wrap";
     wrap.tabIndex = 0;
     wrap.setAttribute("role", "region");
-    wrap.setAttribute("aria-label", "Kaydırılabilir tablo");
+    wrap.setAttribute("aria-label", "Scrollable table");
     table.replaceWith(wrap);
     wrap.appendChild(table);
   });
@@ -541,7 +541,7 @@ export function renderMarkdownInto(root, value, options = {}) {
   } catch (error) {
     root.textContent = String(value || "");
     root.classList.add("md-render-fallback");
-    options.actions?.notify?.("Markdown güvenli düz metin olarak gösterildi");
+    options.actions?.notify?.("Markdown was displayed as safe plain text");
   }
   return root;
 }

@@ -76,7 +76,7 @@ window.addEventListener("offline", () => setConnectionOnline(false));
 
 function showErrorOverlay(msg) {
   if (!errOverlay) return;
-  errOverlay.textContent = "HATA: " + msg;
+  errOverlay.textContent = "ERROR: " + msg;
   errOverlay.style.display = "block";
   clearTimeout(errTimer);
   errTimer = setTimeout(() => {
@@ -149,11 +149,11 @@ const TauriChannel = tauriCore?.Channel;
 const markdownActions = {
   notify: showStatusToast,
   openExternal: async (url) => {
-    if (!invoke) throw new Error("Baglanti acma servisi kullanilamiyor.");
+    if (!invoke) throw new Error("The link-opening service is unavailable.");
     await invoke("open_external_url", { url });
   },
   openPath: async (path) => {
-    if (!invoke) throw new Error("Dosya acma servisi kullanilamiyor.");
+    if (!invoke) throw new Error("The file-opening service is unavailable.");
     await invoke("reveal_local_path", { path });
   },
 };
@@ -560,7 +560,7 @@ async function hydrateProviderRegistry() {
     if (!Array.isArray(catalog) || catalog.length === 0) return;
     PROVIDER_REGISTRY = Object.fromEntries(catalog.map((provider) => [provider.id, provider]));
   } catch (e) {
-    console.warn("Provider kataloğu yüklenemedi; yerleşik katalog kullanılıyor", e);
+    console.warn("Provider catalog could not be loaded; using the built-in catalog", e);
   }
 }
 
@@ -664,7 +664,7 @@ function scrubSecrets(value) {
 }
 
 function safeError(error) {
-  return String(error || "Bilinmeyen hata")
+  return String(error || "Unknown error")
     .replace(/Bearer\s+[^\s"',}\]]+/gi, "Bearer ***")
     .replace(/([?&]key=)[^&\s"']+/gi, "$1***")
     .replace(/(?:sk-ant-|sk-|gsk_|AIza|nvapi-)[A-Za-z0-9._-]+/g, "***");
@@ -727,7 +727,7 @@ function parseSecretHeaders(raw) {
     .filter(Boolean)
     .map((line) => {
       const separator = line.indexOf(":");
-      if (separator <= 0) throw new Error("Header biçimi 'Ad: Değer' olmalı");
+      if (separator <= 0) throw new Error("Header format must be 'Name: Value'");
       return { name: line.slice(0, separator).trim(), value: line.slice(separator + 1).trim() };
     });
 }
@@ -751,10 +751,10 @@ function openApiModal(p) {
     customTimeout.value = String(p.requestTimeoutSecs || 45);
     customHeaders.value = "";
     customAllowLocal.checked = Boolean(p.allowLocalNetwork);
-    apiKeySubtext.textContent = "Sunucu ayrıntılarını girin ve Enter'a basın";
+    apiKeySubtext.textContent = "Enter server details and press Enter";
     requestAnimationFrame(() => customBaseUrl.focus());
   } else if (!p.requiresApiKey) {
-    apiKeySubtext.textContent = "Bağlanılıyor...";
+    apiKeySubtext.textContent = "Connecting...";
     connectProvider(p, "");
   } else {
     apiKeySubtext.textContent = p.name + " API Key";
@@ -787,7 +787,7 @@ async function connectProvider(provider, apiKey) {
     const headers = isCustom ? parseSecretHeaders(customHeaders.value) : [];
     const requestTimeoutSecs = isCustom ? Number(customTimeout.value || 45) : null;
     const allowLocalNetwork = isCustom ? customAllowLocal.checked : false;
-    if (!baseUrl) throw new Error("Base URL gerekli");
+    if (!baseUrl) throw new Error("Base URL is required");
     countApiCall();
     const connected = await invoke("connect_provider_secure", {
       connection: {
@@ -807,7 +807,7 @@ async function connectProvider(provider, apiKey) {
     });
     const validation = connected.validation;
     const selectedModel = manualModel || validation.recommendedModel || provider.defaultModel;
-    if (!selectedModel) throw new Error("Kullanılabilir agent modeli bulunamadı");
+    if (!selectedModel) throw new Error("No compatible agent model was found");
 
     const prev = configCache || (await invoke("get_config")) || {};
     const newProvider = {
@@ -881,7 +881,7 @@ async function connectProvider(provider, apiKey) {
     openModelMenu();
   } catch (e) {
     apiKeyInput.classList.add("error");
-    apiKeyError.textContent = "Bağlantı kurulamadı — " + safeError(e);
+    apiKeyError.textContent = "Could not connect — " + safeError(e);
     apiKeySubtext.textContent = "";
     setTimeout(() => apiKeyInput.classList.remove("error"), 1500);
   } finally {
@@ -901,11 +901,11 @@ document.addEventListener("keydown", (ev) => {
       : apiModalProvider.requiresApiKey;
     if (!key && keyRequired) {
       apiKeyInput.classList.add("error");
-      apiKeyError.textContent = "Geçersiz API Key";
+      apiKeyError.textContent = "Invalid API key";
       setTimeout(() => apiKeyInput.classList.remove("error"), 1500);
       return;
     }
-    apiKeySubtext.textContent = "Doğrulanıyor...";
+    apiKeySubtext.textContent = "Verifying...";
     connectProvider(apiModalProvider, key);
   } else if (ev.key === "Escape") {
     ev.preventDefault();
@@ -1103,7 +1103,7 @@ function effectiveConversationHistory() {
   return [
     {
       role: "system",
-      content: "## Sıkıştırılmış oturum hafızası\nBu özet eski konuşma turlarının doğrulanmış devam bağlamıdır.\n\n" + state.summary,
+      content: "## Compacted session memory\nThis summary is the verified continuation context for earlier conversation turns.\n\n" + state.summary,
     },
     ...conversationHistory.slice(state.compactedThrough),
   ];
@@ -1206,7 +1206,7 @@ function updateCtxGauge(history = null, reply = null) {
     const source = currentSession?.usage?.source || (measuredTotal > 0 ? "provider" : "estimated");
     ctxStatus.title = "Context: " + fmtK(total) + " / " + fmtK(limit) + " (" + pct.toFixed(1) + "%) — " + source + " · compact %" + Math.round(ratio * 100);
     ctxStatus.setAttribute("aria-valuenow", String(Math.round(pct)));
-    ctxStatus.setAttribute("aria-label", "Context yüzde " + Math.round(pct));
+    ctxStatus.setAttribute("aria-label", "Context " + Math.round(pct) + " percent");
   }
 }
 
@@ -1523,7 +1523,7 @@ function renderModalList(items) {
   } else if (modalMode === "diagnostics-providers") {
     const header = document.createElement("div");
     header.className = "modal-category";
-    header.textContent = "Tanılanacak provider";
+    header.textContent = "Provider to diagnose";
     modalList.appendChild(header);
     items.forEach((it) => {
       const el = document.createElement("div");
@@ -1535,7 +1535,7 @@ function renderModalList(items) {
       meta.className = "provider-item-state";
       const report = providerDiagnosticCache.get(it.id);
       meta.dataset.state = report?.overall || "unknown";
-      meta.textContent = report ? diagnosticStateLabel(report.overall) : "Henüz kontrol edilmedi";
+      meta.textContent = report ? diagnosticStateLabel(report.overall) : "Not checked yet";
       el.append(title, meta);
       modalList.appendChild(el);
       modalItems.push({ el, item: it });
@@ -1543,7 +1543,7 @@ function renderModalList(items) {
   } else if (modalMode === "sessions" || modalMode === "delete-sessions") {
     const header = document.createElement("div");
     header.className = "modal-category";
-    header.textContent = modalMode === "delete-sessions" ? "Bir konuşma seç" : "Konuşmalar";
+    header.textContent = modalMode === "delete-sessions" ? "Choose a conversation" : "Conversations";
     modalList.appendChild(header);
     items.forEach((it) => {
       const el = document.createElement("div");
@@ -1553,7 +1553,7 @@ function renderModalList(items) {
       title.textContent = it.title;
       const meta = document.createElement("span");
       meta.className = "session-meta";
-      meta.textContent = shortModelName(it.model) + " · " + it.messageCount + (it.hasDraft ? " · yarım" : "");
+      meta.textContent = shortModelName(it.model) + " · " + it.messageCount + (it.hasDraft ? " · draft" : "");
       el.append(title, meta);
       modalList.appendChild(el);
       modalItems.push({ el, item: it });
@@ -1561,7 +1561,7 @@ function renderModalList(items) {
   } else if (modalMode === "mode") {
     const header = document.createElement("div");
     header.className = "modal-category";
-    header.textContent = "Erişim Modu";
+    header.textContent = "Access mode";
     modalList.appendChild(header);
     let connectedIdx = 0;
     items.forEach((it, i) => {
@@ -1593,7 +1593,7 @@ function renderModalList(items) {
       indicator.dataset.state = report?.overall || (isConnected ? "connected" : "unlinked");
       indicator.setAttribute("aria-label", report
         ? diagnosticStateLabel(report.overall)
-        : isConnected ? "Bağlı" : "Bağlı değil");
+        : isConnected ? "Connected" : "Not connected");
       if (isActive) indicator.classList.add("is-active");
       el.append(label, indicator);
       if (isActive) connectedIdx = i;
@@ -1824,7 +1824,7 @@ async function getModels(force = false, refreshBackend = force) {
   try {
     config = configCache || (await invoke("get_config"));
   } catch (e) {
-    logLine("config okunamadı: " + e, "err");
+    logLine("Could not read config: " + e, "err");
     return [];
   }
   if (!config) return [];
@@ -1856,7 +1856,7 @@ async function getModels(force = false, refreshBackend = force) {
       return models.map((model) => ({ ...model, providerId, providerName: pName }));
     } catch (e) {
       failures.push(String(e));
-      logLine("model listesi alınamadı (" + providerId + "): " + e, "err");
+      logLine("Could not load model list (" + providerId + "): " + e, "err");
       return [];
     }
   });
@@ -1960,7 +1960,7 @@ async function openModelMenu() {
   try {
     models = await getModels();
   } catch (e) {
-    logLine("model listesi alınamadı: " + e, "err");
+    logLine("Could not load model list: " + e, "err");
   }
   if (models.length === 0) {
     // Fallback: ağ/limit hatası — tüm bağlı provider'ların mevcut modellerini göster
@@ -1982,7 +1982,7 @@ async function openModelMenu() {
             });
           }
         }
-        if (models.length) logLine("ağ/limit hatası — mevcut modeller gösteriliyor", "sys");
+        if (models.length) logLine("Network or rate-limit error — showing cached models", "sys");
       }
     } catch (e2) {}
   }
@@ -2107,13 +2107,13 @@ function diagnosticCheckRow(entry) {
 function renderDiagnosticsLoading(providerId, deep) {
   const provider = PROVIDER_REGISTRY[providerId];
   diagnosticsProvider.textContent = provider?.name || providerId;
-  diagnosticsTitle.textContent = deep ? "Deep bağlantı testi" : "Bağlantı tanılaması";
+  diagnosticsTitle.textContent = deep ? "Deep connection test" : "Connection diagnostics";
   diagnosticsOverall.dataset.state = "checking";
   diagnosticsOverall.textContent = "Kontrol ediliyor";
   diagnosticsContent.innerHTML = "";
   const loading = document.createElement("div");
   loading.className = "diagnostics-loading";
-  for (const label of ["Kimlik bilgisi", "Model kataloğu", "Chat endpoint", "Araç desteği"]) {
+  for (const label of ["Credentials", "Model catalog", "Chat endpoint", "Tool support"]) {
     const line = document.createElement("span");
     line.textContent = label;
     loading.appendChild(line);
@@ -2123,7 +2123,7 @@ function renderDiagnosticsLoading(providerId, deep) {
 
 function renderDiagnostics(report) {
   diagnosticsProvider.textContent = report.providerName || report.providerId || "Provider";
-  diagnosticsTitle.textContent = report.requestedModel ? shortModelName(report.requestedModel) : "Bağlantı tanılaması";
+  diagnosticsTitle.textContent = report.requestedModel ? shortModelName(report.requestedModel) : "Connection diagnostics";
   diagnosticsOverall.dataset.state = report.overall || "unknown";
   diagnosticsOverall.textContent = diagnosticStateLabel(report.overall);
   diagnosticsContent.innerHTML = "";
@@ -2133,7 +2133,7 @@ function renderDiagnostics(report) {
   summary.append(
     diagnosticMeta("Endpoint", report.endpoint),
     diagnosticMeta("Protokol", report.protocol),
-    diagnosticMeta("Katalog", report.modelCount === null || report.modelCount === undefined ? "—" : `${report.modelCount} model`),
+    diagnosticMeta("Catalog", report.modelCount === null || report.modelCount === undefined ? "—" : `${report.modelCount} models`),
   );
   diagnosticsContent.appendChild(summary);
 
@@ -2141,7 +2141,7 @@ function renderDiagnostics(report) {
     const last = document.createElement("section");
     last.className = "diagnostics-last-request";
     const label = document.createElement("span");
-    label.textContent = "Son istek";
+    label.textContent = "Last request";
     const value = document.createElement("strong");
     value.textContent = `${lastRequestModel(report.lastRequest)} · ${report.lastRequest.latencyMs || 0} ms · ${statusNumber(report.lastRequest.totalTokens || 0)} token`;
     last.append(label, value);
@@ -2158,12 +2158,12 @@ function renderDiagnostics(report) {
     const limitSection = document.createElement("section");
     limitSection.className = "diagnostics-limits";
     const heading = document.createElement("span");
-    heading.textContent = report.account ? "Hesap ve provider limitleri" : "Provider limitleri";
+    heading.textContent = report.account ? "Account and provider limits" : "Provider limits";
     limitSection.appendChild(heading);
     if (report.account) {
       limitSection.append(
-        diagnosticMeta("kalan kredi", diagnosticMoney(report.account.remainingUsd)),
-        diagnosticMeta("kullanım", diagnosticMoney(report.account.usageUsd)),
+        diagnosticMeta("remaining credit", diagnosticMoney(report.account.remainingUsd)),
+        diagnosticMeta("usage", diagnosticMoney(report.account.usageUsd)),
         diagnosticMeta("hesap", report.account.tier || "—"),
       );
     }
@@ -2199,7 +2199,7 @@ function setDiagnosticsBusy(value) {
 
 async function runProviderDiagnostics(providerId, deep = false) {
   const config = runtimeConfigForProvider(providerId);
-  if (!config) throw new Error("Provider bağlı değil");
+  if (!config) throw new Error("Provider is not connected");
   const generation = ++diagnosticsGeneration;
   setDiagnosticsBusy(true);
   renderDiagnosticsLoading(providerId, deep);
@@ -2221,10 +2221,10 @@ async function runProviderDiagnostics(providerId, deep = false) {
       requestedModel: config.model,
       checks: [{
         id: "runtime",
-        title: "Tanılama motoru",
+        title: "Diagnostics engine",
         state: "failed",
         detail: safeError(error),
-        action: "Provider bağlantısını yenileyip tekrar deneyin.",
+        action: "Reconnect the provider and try again.",
       }],
     }, diagnosticObservation(providerId));
     providerDiagnosticCache.set(providerId, diagnosticsReport);
@@ -2237,7 +2237,7 @@ async function runProviderDiagnostics(providerId, deep = false) {
 
 async function openProviderDiagnostics(providerId) {
   if (!runtimeConfigForProvider(providerId)) {
-    showStatusToast("Bu provider bağlı değil.");
+    showStatusToast("This provider is not connected.");
     return;
   }
   diagnosticsProviderId = providerId;
@@ -2262,7 +2262,7 @@ async function openDiagnosticsMenu() {
     return [id, { id, name: PROVIDER_REGISTRY[id]?.name || id }];
   })).values()];
   if (!unique.length) {
-    showStatusToast("Önce bir provider bağlayın.");
+    showStatusToast("Connect a provider first.");
     return;
   }
   if (unique.length === 1) {
@@ -2288,9 +2288,9 @@ async function copyProviderDiagnostics() {
   if (!diagnosticsReport) return;
   try {
     await navigator.clipboard.writeText(JSON.stringify(diagnosticExport(diagnosticsReport), null, 2));
-    showStatusToast("Güvenli tanılama raporu kopyalandı.");
+    showStatusToast("Safe diagnostics report copied.");
   } catch (error) {
-    showStatusToast("Rapor panoya kopyalanamadı.");
+    showStatusToast("Could not copy report to the clipboard.");
   }
 }
 
@@ -2330,7 +2330,7 @@ document.addEventListener("keydown", (event) => {
 
 async function testLinkedProvider(providerId) {
   const config = runtimeConfigForProvider(providerId);
-  if (!config) throw new Error("Provider bağlı değil");
+  if (!config) throw new Error("Provider is not connected");
   countApiCall();
   const result = await invoke("test_provider_connection", { config });
   logLine(`${providerId}: ${result.message}`, "ok");
@@ -2340,7 +2340,7 @@ async function testLinkedProvider(providerId) {
 async function reconnectProvider(providerId) {
   const entry = linkedProviderById(providerId);
   const provider = PROVIDER_REGISTRY[providerId];
-  if (!provider) throw new Error("Provider bulunamadı");
+  if (!provider) throw new Error("Provider was not found");
   openApiModal({ ...provider, ...(entry || {}), id: providerId, name: provider.name });
 }
 
@@ -2353,16 +2353,16 @@ async function removeLinkedProvider(providerId) {
     : null;
   persistConfigCache();
   if (configCache && configCache.model) updateModelChip(configCache.model);
-  logLine(`${providerId}: bağlantı ve güvenli kimlik bilgisi silindi`, "ok");
+  logLine(`${providerId}: connection and secure credentials removed`, "ok");
   if (!configCache || !configCache.provider) openProviderMenu();
 }
 
 function openModeMenu() {
   hideSuggest();
   modalAllItems = [
-    { id: "smart", name: "smart — okuma otomatik, yazma/tehlikeli onaylı" },
-    { id: "strict", name: "strict — her şey onay ister" },
-    { id: "autonomous", name: "autonomous — tam otonom, onay yok" },
+    { id: "smart", name: "smart — reads automatically; writes and risky actions require approval" },
+    { id: "strict", name: "strict — every action requires approval" },
+    { id: "autonomous", name: "autonomous — fully autonomous, no approvals" },
   ];
   openModal("mode");
 }
@@ -2374,12 +2374,12 @@ async function openSessionsMenu() {
 
 async function openDeleteSessionsMenu() {
   if (activeRequestId) {
-    renderAlert("Aktif yanıt sürerken konuşma silinemez.");
+    renderAlert("A conversation cannot be deleted while a response is active.");
     return;
   }
   modalAllItems = await invoke("list_sessions");
   if (!modalAllItems.length) {
-    showStatusToast("Silinebilecek konuşma yok.");
+    showStatusToast("There are no conversations to delete.");
     return;
   }
   openModal("delete-sessions");
@@ -2388,7 +2388,7 @@ async function openDeleteSessionsMenu() {
 function openSessionDeleteConfirm(session) {
   pendingSessionDelete = session;
   deleteReturnFocus = document.activeElement;
-  sessionDeleteDescription.textContent = `“${session.title}” kalıcı olarak silinecek. Bu işlem geri alınamaz.`;
+  sessionDeleteDescription.textContent = `“${session.title}” will be permanently deleted. This cannot be undone.`;
   void sessionDeleteVisibility.open();
   revealMenuContent(sessionDeleteModal, ".confirm-copy, .confirm-actions", { delay: 55, stagger: 30, maxItems: 2 });
   requestAnimationFrame(() => sessionDeleteCancel.focus());
@@ -2411,13 +2411,13 @@ async function confirmSessionDelete() {
     const deleted = await invoke("delete_session", { id: session.id });
     closeSessionDeleteConfirm();
     if (!deleted) {
-      showStatusToast("Konuşma daha önce silinmiş.");
+      showStatusToast("The conversation has already been deleted.");
       return;
     }
     if (currentSession?.id === session.id) await newSession();
-    showStatusToast(`“${session.title}” silindi · geri alınamaz`);
+    showStatusToast(`“${session.title}” deleted · cannot be undone`);
   } catch (error) {
-    renderAlert("konuşma silinemedi: " + safeError(error));
+    renderAlert("Could not delete conversation: " + safeError(error));
   } finally {
     sessionDeleteConfirm.disabled = false;
   }
@@ -2487,7 +2487,7 @@ function requestId() {
 }
 
 function sessionTitle(text) {
-  return String(text || "").trim().replace(/\s+/g, " ").slice(0, 64) || "Yeni konuşma";
+  return String(text || "").trim().replace(/\s+/g, " ").slice(0, 64) || "New conversation";
 }
 
 async function ensureSession(firstMessage) {
@@ -2560,24 +2560,24 @@ function serializeCompactionMessages(messages) {
 
 function compactionPrompt(previousSummary, messages) {
   return (
-    "Aşağıdaki eski oturum bağlamını, daha sonra aynı işi kesintisiz sürdürecek başka bir AI için güncelle. " +
-    "Araç çağırma; yalnızca yapılandırılmış Türkçe özet döndür. Önceki özet varsa onu baştan yorumlayıp ayrıntı kaybetme, yeni bilgileri ilgili bölümlere birleştir. " +
-    "Dosya yollarını, fonksiyon/değişken adlarını, hata metinlerini, sayıları ve kullanıcı kısıtlarını aynen koru. " +
-    "Tool çağrıları ile sonuçlarının ilişkisini belirt; gerçek olmayan ayrıntı ekleme.\n\n" +
-    "ZORUNLU BÖLÜMLER:\n" +
-    "## Oturum Amacı\n## Kullanıcı Kısıtları\n## Alınan Kararlar\n## Dosyalar ve Artifactler\n" +
-    "## Tool Sonuçları\n## Mevcut Durum\n## Açık İşler ve Sonraki Adımlar\n\n" +
-    "ÖNCEKİ ANCHORED ÖZET:\n" + (previousSummary || "(ilk compact)") +
-    "\n\nYENİ SIKIŞTIRILACAK MESAJLAR:\n" + serializeCompactionMessages(messages)
+    "Update the older session context below for another AI that must continue the same work without interruption. " +
+    "Do not call tools; return only a structured English summary. If a prior summary exists, preserve its details and merge new information into the relevant sections. " +
+    "Preserve file paths, function and variable names, error text, numbers, and user constraints exactly. " +
+    "Record the relationship between tool calls and their results; do not invent details.\n\n" +
+    "REQUIRED SECTIONS:\n" +
+    "## Session Objective\n## User Constraints\n## Decisions\n## Files and Artifacts\n" +
+    "## Tool Results\n## Current State\n## Open Work and Next Steps\n\n" +
+    "PREVIOUS ANCHORED SUMMARY:\n" + (previousSummary || "(first compaction)") +
+    "\n\nNEW MESSAGES TO COMPACT:\n" + serializeCompactionMessages(messages)
   );
 }
 
 async function performCompaction(mode = "manual", homeDir = "") {
-  if (!currentSession) return { compacted: false, reason: "Önce bir oturum başlatılmalı." };
+  if (!currentSession) return { compacted: false, reason: "Start a session first." };
   normalizeSessionIntelligence(currentSession);
   const boundary = compactionBoundary(mode);
   if (boundary === null) {
-    return { compacted: false, reason: "Sıkıştırmak için yeterli eski konuşma turu yok." };
+    return { compacted: false, reason: "There are not enough older conversation turns to compact." };
   }
 
   const previousCompaction = JSON.parse(JSON.stringify(currentSession.compaction));
@@ -2602,7 +2602,7 @@ async function performCompaction(mode = "manual", homeDir = "") {
     countApiCall();
     const reply = await invoke("chat_completion", { config: configCache, messages: summaryRequest });
     const summary = String(reply?.text || "").trim();
-    if (!summary) throw new Error("Provider geçerli compact özeti döndürmedi");
+    if (!summary) throw new Error("The provider did not return a valid compaction summary");
 
     currentSession.compaction = {
       ...previousCompaction,
@@ -2617,7 +2617,7 @@ async function performCompaction(mode = "manual", homeDir = "") {
     };
     const tokensAfter = estimateTokens(effectiveRequestHistory(configCache, homeDir));
     if (tokensAfter >= tokensBefore) {
-      throw new Error("Compact özeti mevcut bağlamdan daha küçük olmadı; geçmiş değiştirilmedi");
+      throw new Error("The compacted summary was not smaller than the current context; history was left unchanged");
     }
     recordReplyUsage(reply, summaryRequest, { updateContext: false });
     currentSession.compaction.tokensAfter = tokensAfter;
@@ -2651,9 +2651,9 @@ function shouldAutoCompact(history) {
 }
 
 function formatUsd(value) {
-  if (value === null || value === undefined || value === "") return "sağlayıcı fiyat bildirmiyor";
+  if (value === null || value === undefined || value === "") return "provider does not report pricing";
   const number = Number(value);
-  if (!Number.isFinite(number)) return "sağlayıcı fiyat bildirmiyor";
+  if (!Number.isFinite(number)) return "provider does not report pricing";
   if (number < 0.01) return "$" + number.toFixed(5);
   return "$" + number.toFixed(3);
 }
@@ -2704,7 +2704,7 @@ function limitSnapshot(remaining, limit, reset) {
   let value = hasRemaining && hasLimit
     ? `${remaining} / ${limit}`
     : hasRemaining
-      ? `${remaining} kaldı`
+      ? `${remaining} remaining`
       : hasLimit
         ? `limit ${limit}`
         : "";
@@ -2722,12 +2722,12 @@ function statusNumber(value) {
 
 function rateLimitCandidates(rate) {
   return [
-    ["requests", "İstek", rate.requestsRemaining, rate.requestsLimit, rate.requestsReset],
+    ["requests", "Requests", rate.requestsRemaining, rate.requestsLimit, rate.requestsReset],
     ["tokens", "Token", rate.tokensRemaining, rate.tokensLimit, rate.tokensReset],
     ["input", "Input", rate.inputTokensRemaining, rate.inputTokensLimit, rate.inputTokensReset],
     ["output", "Output", rate.outputTokensRemaining, rate.outputTokensLimit, rate.outputTokensReset],
     ["cached", "Cache input", rate.cachedInputTokensRemaining, rate.cachedInputTokensLimit, rate.cachedInputTokensReset],
-    ["project", "Proje token", rate.projectTokensRemaining, rate.projectTokensLimit, rate.projectTokensReset],
+    ["project", "Project tokens", rate.projectTokensRemaining, rate.projectTokensLimit, rate.projectTokensReset],
   ];
 }
 
@@ -2737,7 +2737,7 @@ function rateLimitMetrics(rate, omittedKey = "") {
     .map(([, label, remaining, limit, reset]) => [label, limitSnapshot(remaining, limit, reset)])
     .filter(([, value]) => value)
     .map(([label, value]) => statusMetric(label, value));
-  if (rate.retryAfter) rows.push(statusMetric("Yeniden dene", String(rate.retryAfter)));
+  if (rate.retryAfter) rows.push(statusMetric("Retry after", String(rate.retryAfter)));
   return rows;
 }
 
@@ -2748,7 +2748,7 @@ function statusHero(rate, usage, context) {
       const remainingValue = Number(remaining);
       return {
         key,
-        label: `${label.toLocaleLowerCase("tr-TR")} kaldı`,
+        label: `${label.toLocaleLowerCase("en-US")} remaining`,
         value: statusNumber(remaining),
         detail: `${limit ? `/ ${statusNumber(limit)}` : ""}${reset ? ` · ${reset}` : ""}`.trim(),
         progress: Number.isFinite(limitValue) && limitValue > 0 && Number.isFinite(remainingValue)
@@ -2762,9 +2762,9 @@ function statusHero(rate, usage, context) {
     if (limit !== null && limit !== undefined && limit !== "") {
       return {
         key,
-        label: `${label.toLocaleLowerCase("tr-TR")} limiti`,
+        label: `${label.toLocaleLowerCase("en-US")} limit`,
         value: statusNumber(limit),
-        detail: reset ? String(reset) : "provider limiti",
+        detail: reset ? String(reset) : "provider limit",
         progress: context.percent,
       };
     }
@@ -2773,7 +2773,7 @@ function statusHero(rate, usage, context) {
   if (Number(usage.totalTokens) > 0) {
     return {
       key: "usage",
-      label: "kullanılan token",
+      label: "tokens used",
       value: statusNumber(usage.totalTokens),
       detail: `${statusNumber(usage.inputTokens)} input · ${statusNumber(usage.outputTokens)} output`,
       progress: context.percent,
@@ -2782,7 +2782,7 @@ function statusHero(rate, usage, context) {
 
   return {
     key: "context",
-    label: "context kullanımı",
+    label: "context usage",
     value: `%${context.percent.toFixed(1)}`,
     detail: `${statusNumber(context.used)} / ${statusNumber(context.limit)} · ${context.source}`,
     progress: context.percent,
@@ -2800,7 +2800,7 @@ function renderSessionStatus() {
   const hero = statusHero(rate, usage, { limit, used, remaining, percent, source });
   const rateRows = rateLimitMetrics(rate, hero.key);
 
-  statusProvider.textContent = providerNameCache || configCache?.provider || "Oturum";
+  statusProvider.textContent = providerNameCache || configCache?.provider || "Session";
   statusTitle.textContent = shortModelName(configCache?.model || "model");
   statusContent.innerHTML = "";
 
@@ -2825,14 +2825,14 @@ function renderSessionStatus() {
 
   statusContent.append(
     heroSection,
-    statusSection("Oturum", [
+    statusSection("Session", [
       statusMetric("Context", `${statusNumber(used)} / ${statusNumber(limit)} · %${percent.toFixed(1)}`, hero.key === "context"),
       statusMetric("Input / output", `${statusNumber(usage.inputTokens)} / ${statusNumber(usage.outputTokens)}`),
       statusMetric("Reasoning / cached", `${statusNumber(usage.reasoningTokens)} / ${statusNumber(usage.cachedTokens)}`),
-      statusMetric("API / maliyet", `${usage.apiCalls} çağrı · ${formatUsd(usage.costUsd)}`),
+      statusMetric("API / cost", `${usage.apiCalls} calls · ${formatUsd(usage.costUsd)}`),
     ]),
   );
-  if (rateRows.length) statusContent.appendChild(statusSection("Limitler", rateRows));
+  if (rateRows.length) statusContent.appendChild(statusSection("Limits", rateRows));
 
   statusReturnFocus = document.activeElement;
   void statusVisibility.open();
@@ -2905,7 +2905,7 @@ function renderSession(record) {
         const content = String(message.content || "");
         const match = content.match(/^\[tool:([^\]]+)]\s*/);
         const savedCall = savedToolCalls.get(message.toolCallId);
-        const toolName = savedCall?.name || match?.[1] || "araç sonucu";
+        const toolName = savedCall?.name || match?.[1] || "tool result";
         const params = savedCall?.arguments && typeof savedCall.arguments === "object" ? savedCall.arguments : {};
         const target = toolName === "execute_command"
           ? String(params.command || params.cmd || "").slice(0, 60)
@@ -2922,7 +2922,7 @@ function renderSession(record) {
     if (record.draft?.text) {
       const partial = completedRichMessage(record.draft.text);
       partial.classList.add("interrupted-response");
-      partial.title = "Bu yanıt tamamlanmadan kesildi; provider geçmişine eklenmedi.";
+      partial.title = "This response was interrupted before completion and was not added to provider history.";
     }
   } finally {
     logRenderTarget = logEl;
@@ -2932,7 +2932,7 @@ function renderSession(record) {
 }
 
 async function resumeSession(id) {
-  if (activeRequestId) throw new Error("Aktif yanıt sürerken oturum değiştirilemez");
+  if (activeRequestId) throw new Error("Cannot switch sessions while a response is active");
   const record = await invoke("load_session", { id });
   const restored = runtimeConfigForProvider(record.provider);
   if (restored) {
@@ -3206,10 +3206,10 @@ function renderDiffHtml(toolId, params) {
 
   if (toolId === "write_file") {
     const contentLines = String(params.content || "").split("\n");
-    let html = '<div class="diff-metrics">' + escapeHtml(shortPath(params.path || "")) + ' <span class="m-add">+' + contentLines.length + " satır yeni dosya</span></div>";
+    let html = '<div class="diff-metrics">' + escapeHtml(shortPath(params.path || "")) + ' <span class="m-add">+' + contentLines.length + " lines in new file</span></div>";
     let n = 1;
     for (const cl of contentLines.slice(0, 60)) html += '<div class="diff-line diff-add"><span class="diff-num"></span><span class="diff-num">' + n++ + '</span><span class="diff-sign">+</span><span>' + escapeHtml(cl) + "</span></div>";
-    if (contentLines.length > 60) html += '<div class="diff-hunk">... ' + (contentLines.length - 60) + " satır gizlendi</div>";
+    if (contentLines.length > 60) html += '<div class="diff-hunk">... ' + (contentLines.length - 60) + " lines hidden</div>";
     return html;
   }
 
@@ -3231,13 +3231,13 @@ function stopCountdown() {
   clearInterval(approvalTimer);
   approvalTimer = null;
   const hint = document.querySelector(".approval-hint");
-  if (hint) hint.textContent = "[y] onayla · [a] oturum için · [p] her zaman · [n] reddet · [e] düzenle · [Esc] iptal";
+  if (hint) hint.textContent = "[y] approve · [a] for session · [p] always · [n] deny · [e] edit · [Esc] cancel";
 }
 
 function startCountdown() {
   let remaining = APPROVAL_TIMEOUT;
   const hint = document.querySelector(".approval-hint");
-  const base = "[y] onayla · [a] oturum için · [p] her zaman · [n] reddet · [e] düzenle · [Esc] iptal";
+  const base = "[y] approve · [a] for session · [p] always · [n] deny · [e] edit · [Esc] cancel";
   const tick = () => {
     if (remaining <= 0) {
       stopCountdown();
@@ -3245,7 +3245,7 @@ function startCountdown() {
       if (r) { closeApproval(); r.resolve("once"); }
       return;
     }
-    if (hint) hint.textContent = remaining + "s içinde otomatik onaylanacak... (" + base + ")";
+    if (hint) hint.textContent = "Auto-approving in " + remaining + "s... (" + base + ")";
     remaining--;
   };
   tick();
@@ -3319,7 +3319,7 @@ function buildToolSummary(toolId, result) {
     case "read_file": return String(result.content || "").slice(0, 2000);
     case "list_dir": return (result.entries || []).map((e) => (e.is_dir ? e.name + "/" : e.name)).join(", ").slice(0, 1000);
     case "search_code": return (result.matches || []).map((m) => m.file + ":" + m.line + " " + m.text).join("\n").slice(0, 1500);
-    case "glob_files": return (result.files || []).join("\n").slice(0, 1000) || "(eşleşme yok)";
+    case "glob_files": return (result.files || []).join("\n").slice(0, 1000) || "(no matches)";
     case "web_fetch": return String(result.content || "").slice(0, 2000);
     case "analyze_codebase": {
       if (result.tree) return (result.tree || []).join("\n").slice(0, 1500);
@@ -3330,17 +3330,17 @@ function buildToolSummary(toolId, result) {
     case "apply_diff":
     case "create_dir":
     case "manage_memory":
-      return result.message || "tamamlandı";
+      return result.message || "completed";
     case "manage_background_process": return JSON.stringify(result).slice(0, 800);
     case "spawn_sub_agent": return String(result.sub_agent_reply || "").slice(0, 2000);
     case "execute_command": {
       let s = "";
       if (result.stdout) s += String(result.stdout).slice(0, 1500);
       if (result.stderr) s += "\nSTDERR: " + String(result.stderr).slice(0, 500);
-      if (result.exit_code !== 0) s += "\nçıkış kodu: " + result.exit_code;
-      return s || "(çıktı yok)";
+      if (result.exit_code !== 0) s += "\nexit code: " + result.exit_code;
+      return s || "(no output)";
     }
-    default: return result.message || "tamamlandı";
+    default: return result.message || "completed";
   }
 }
 
@@ -3405,7 +3405,7 @@ async function executeTool(toolId, params, approved) {
       if (all > 60) { hidden = all - 60; shownOut = stdoutLines.slice(0, 45); shownErr = stderrLines.slice(0, 15); }
       bodyParts.push(shownOut.join("\n"));
       if (shownErr.length) bodyParts.push('[stderr]\n' + shownErr.join("\n"));
-      if (hidden > 0) bodyParts.push('... ' + hidden + " satır gizlendi");
+      if (hidden > 0) bodyParts.push('... ' + hidden + " lines hidden");
       if (result.exit_code !== 0) bodyParts.push('[exit] ' + result.exit_code);
     } else if (toolId === "list_dir") {
       // 3 s?tunlu esnek grid
@@ -3423,10 +3423,10 @@ async function executeTool(toolId, params, approved) {
       const lines = String(result.content || "").split("\n");
       const numbered = lines.slice(0, 80).map((l, i) => String(i + 1).padStart(4, " ") + " | " + l).join("\n");
       bodyParts.push(numbered);
-      if (lines.length > 80) bodyParts.push('... ' + (lines.length - 80) + " satır daha");
+      if (lines.length > 80) bodyParts.push('... ' + (lines.length - 80) + " more lines");
     } else if (toolId === "search_code" || toolId === "analyze_codebase") {
       const matches = result.matches || [];
-      bodyParts.push(matches.slice(0, 40).map((m) => String(m.file).split(/[\\/]/).pop() + ":" + m.line + "  " + m.text).join("\n") || "(eşleşme yok)");
+      bodyParts.push(matches.slice(0, 40).map((m) => String(m.file).split(/[\\/]/).pop() + ":" + m.line + "  " + m.text).join("\n") || "(no matches)");
     } else if (toolId === "web_fetch") {
       bodyParts.push(String(result.content || "").slice(0, 4000));
     } else if (toolId === "glob_files") {
@@ -3452,7 +3452,7 @@ async function executeTool(toolId, params, approved) {
     item.lbl.classList.add("err");
     item.body.textContent = String(e);
     autoScroll();
-    return "HATA: " + e;
+    return "ERROR: " + e;
   }
 }
 
@@ -3476,13 +3476,13 @@ async function processToolItem(call) {
   try {
     check = await invoke("check_tool", { config: configCache, toolId, params });
   } catch (e) {
-    renderAlert("hata: " + e);
-    return "HATA: " + e;
+    renderAlert("Error: " + e);
+    return "ERROR: " + e;
   }
 
   if (check.decision === "deny") {
-    renderAlert("engellendi: " + check.reason);
-    return "ENGELLENDİ: " + check.reason;
+    renderAlert("Blocked: " + check.reason);
+    return "BLOCKED: " + check.reason;
   }
   if (check.decision === "allow") {
     return await executeTool(toolId, params, true);
@@ -3490,8 +3490,8 @@ async function processToolItem(call) {
 
   const decision = await showApproval(toolId, params, check.risk || risk);
   if (decision === "deny") {
-    renderAlert("reddedildi: " + toolId);
-    return "KULLANICI REDDETTİ";
+    renderAlert("Denied: " + toolId);
+    return "DENIED BY USER";
   }
   return await executeTool(toolId, params, true);
 }
@@ -3500,7 +3500,7 @@ async function processToolItem(call) {
 async function sendChat(message) {
   if (!invoke) return;
   if (!TauriChannel) {
-    renderAlert("Bu Tauri sürümü streaming Channel desteği sunmuyor.");
+    renderAlert("This Tauri version does not support streaming channels.");
     return;
   }
   cmdInput.readOnly = true;
@@ -3528,7 +3528,7 @@ async function sendChat(message) {
       if (shouldAutoCompact(history)) {
         const compacted = await performCompaction("auto", homeDir);
         if (compacted.compacted) {
-          logLine(`bağlam otomatik sıkıştırıldı · ${fmtK(compacted.before)} → ${fmtK(compacted.after)} token`, "sys");
+          logLine(`Context auto-compacted · ${fmtK(compacted.before)} → ${fmtK(compacted.after)} tokens`, "sys");
           history = effectiveRequestHistory(configCache, homeDir);
         }
       }
@@ -3585,7 +3585,7 @@ async function sendChat(message) {
           startedAt: Date.now(),
         } : null, "interrupted");
         if (!cancelled) throw error;
-        logLine("yanıt durduruldu", "sys");
+        logLine("Response stopped", "sys");
         break;
       } finally {
         if (activeRequestId === turnRequestId) activeRequestId = null;
@@ -3663,7 +3663,7 @@ async function sendChat(message) {
     if (currentSession?.status !== "interrupted") await checkpointSession(null, "complete");
   } catch (e) {
     if (isNetworkFailure(e)) setConnectionOnline(false);
-    renderAlert("hata: " + e);
+    renderAlert("Error: " + e);
   } finally {
     if (checkpointTimer) { clearTimeout(checkpointTimer); checkpointTimer = null; }
     activeRequestId = null;
@@ -3702,7 +3702,7 @@ async function runCommand(cmd) {
         } else if (args[0] === "remove" && args[1]) {
           await removeLinkedProvider(args[1]);
         } else {
-          logLine("kullanım: /provider [test|reconnect|remove] <id>", "sys");
+          logLine("Usage: /provider [test|reconnect|remove] <id>", "sys");
         }
         break;
 
@@ -3721,7 +3721,7 @@ async function runCommand(cmd) {
 
       case "compact": {
         if (activeRequestId) {
-          logLine("aktif yanıt sürerken compact başlatılamaz", "err");
+          logLine("Compaction cannot start while a response is active", "err");
           break;
         }
         cmdInput.readOnly = true;
@@ -3733,7 +3733,7 @@ async function runCommand(cmd) {
           }
           const result = await performCompaction("manual", homeDir || "");
           if (!result.compacted) logLine(result.reason, "dim");
-          else logLine(`compact tamamlandı · ${fmtK(result.before)} → ${fmtK(result.after)} · ${fmtK(result.saved)} token kazanıldı`, "ok");
+          else logLine(`Compaction complete · ${fmtK(result.before)} → ${fmtK(result.after)} · ${fmtK(result.saved)} tokens saved`, "ok");
         } finally {
           cmdInput.readOnly = false;
           setAgentState("ready");
@@ -3772,11 +3772,11 @@ async function runCommand(cmd) {
         break;
 
       default:
-        renderAlert("bilinmeyen komut: " + rawName);
+        renderAlert("Unknown command: " + rawName);
         break;
     }
   } catch (e) {
-    renderAlert("hata: " + e);
+    renderAlert("Error: " + e);
   }
 }
 
@@ -3843,7 +3843,7 @@ async function init() {
         await resumeSession(latest.id);
       }
     } catch (error) {
-      logLine("oturum geçmişi yüklenemedi: " + safeError(error), "sys");
+      logLine("Could not load session history: " + safeError(error), "sys");
     }
   }
 }

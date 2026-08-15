@@ -246,8 +246,8 @@ fn config_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     let dir = app
         .path()
         .app_config_dir()
-        .map_err(|e| format!("Config dizini bulunamadı: {}", e))?;
-    fs::create_dir_all(&dir).map_err(|e| format!("Config dizini oluşturulamadı: {}", e))?;
+        .map_err(|e| format!("Could not locate config directory: {}", e))?;
+    fs::create_dir_all(&dir).map_err(|e| format!("Could not create config directory: {}", e))?;
     Ok(dir.join("config.json"))
 }
 
@@ -263,7 +263,7 @@ fn request_timeout(config: &AppConfig, fallback: u64) -> std::time::Duration {
 fn write_sanitized_config(path: &Path, config: &AppConfig) -> Result<(), String> {
     let raw = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
     let temporary = path.with_extension("json.new");
-    fs::write(&temporary, raw).map_err(|e| format!("Config hazırlanamadı: {}", e))?;
+    fs::write(&temporary, raw).map_err(|e| format!("Could not prepare config: {}", e))?;
     fs::copy(&temporary, path).map_err(|e| format!("Config kaydedilemedi: {}", e))?;
     let _ = fs::remove_file(temporary);
     Ok(())
@@ -412,7 +412,7 @@ fn resolve_secret(config: &AppConfig) -> Result<secrets::SecretBundle, String> {
     if auth == providers::AuthScheme::None && config.header_names.is_empty() {
         return Ok(secrets::SecretBundle::default());
     }
-    Err("Kayıtlı kimlik bilgisi bulunamadı; providerı yeniden bağlayın".to_string())
+    Err("Stored credentials were not found; reconnect the provider".to_string())
 }
 
 /// Provider'a göre doğru auth, endpoint ve güvenli headerlarla models isteği kurar.
@@ -451,7 +451,7 @@ fn validate_provider_connection(
         provider_id: config.provider.clone(),
         model_count: models.len(),
         recommended_model,
-        message: format!("{} güncel agent modeli bulundu", models.len()),
+        message: format!("{} current agent models found", models.len()),
     })
 }
 
@@ -519,7 +519,7 @@ async fn connect_provider_secure(
         })
     })
     .await
-    .map_err(|e| format!("İş parçacığı hatası: {}", e))?
+    .map_err(|e| format!("Worker thread error: {}", e))?
 }
 
 #[tauri::command]
@@ -531,7 +531,7 @@ async fn test_provider_connection(
         validate_provider_connection(&config, &secret)
     })
     .await
-    .map_err(|e| format!("İş parçacığı hatası: {}", e))?
+    .map_err(|e| format!("Worker thread error: {}", e))?
 }
 
 #[tauri::command]
@@ -550,9 +550,9 @@ fn credential_status(config: AppConfig) -> CredentialStatus {
         provider_id: config.provider,
         connected,
         message: if connected {
-            "Kimlik bilgisi güvenli kasada kullanılabilir".to_string()
+            "Credentials are available in the secure vault".to_string()
         } else {
-            "Kimlik bilgisi eksik; providerı yeniden bağlayın".to_string()
+            "Credentials are missing; reconnect the provider".to_string()
         },
     }
 }
@@ -571,7 +571,7 @@ fn disconnect_provider(
         .iter()
         .find(|provider| provider.id == provider_id)
         .cloned()
-        .ok_or_else(|| "Provider bağlantısı bulunamadı".to_string())?;
+        .ok_or_else(|| "Provider connection was not found".to_string())?;
     if let Some(secret_ref) = provider.secret_ref.as_deref() {
         secrets::delete(secret_ref)?;
     }
@@ -636,7 +636,7 @@ async fn list_models(
         }
     })
     .await
-    .map_err(|e| format!("İş parçacığı hatası: {}", e))?
+    .map_err(|e| format!("Worker thread error: {}", e))?
 }
 
 /// Mevcut çalışma dizinini döndürür
@@ -656,14 +656,14 @@ fn home() -> String {
 fn validate_external_url(value: &str) -> Result<String, String> {
     let value = value.trim();
     if value.is_empty() || value.len() > 4096 || value.contains('\0') {
-        return Err("Gecersiz baglanti.".to_string());
+        return Err("Invalid link.".to_string());
     }
-    let parsed = url::Url::parse(value).map_err(|_| "Gecersiz baglanti.".to_string())?;
+    let parsed = url::Url::parse(value).map_err(|_| "Invalid link.".to_string())?;
     if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
         return Err("Yalnizca HTTP ve HTTPS baglantilari acilabilir.".to_string());
     }
     if !parsed.username().is_empty() || parsed.password().is_some() {
-        return Err("Kimlik bilgisi iceren baglantilar acilamaz.".to_string());
+        return Err("Links containing credentials cannot be opened.".to_string());
     }
     Ok(parsed.to_string())
 }
@@ -671,22 +671,22 @@ fn validate_external_url(value: &str) -> Result<String, String> {
 fn resolve_reveal_path(value: &str) -> Result<PathBuf, String> {
     let value = value.trim();
     if value.is_empty() || value.len() > 4096 || value.contains('\0') {
-        return Err("Gecersiz dosya yolu.".to_string());
+        return Err("Invalid file path.".to_string());
     }
     if value.starts_with("\\\\") || value.starts_with("//") {
-        return Err("Ag yollari guvenlik nedeniyle acilamaz.".to_string());
+        return Err("Network paths cannot be opened for security reasons.".to_string());
     }
     let expanded = PathBuf::from(expand_path(value));
     let candidate = if expanded.is_absolute() {
         expanded
     } else {
         std::env::current_dir()
-            .map_err(|e| format!("Calisma dizini okunamadi: {e}"))?
+            .map_err(|e| format!("Could not read working directory: {e}"))?
             .join(expanded)
     };
     candidate
         .canonicalize()
-        .map_err(|_| "Yol bulunamadi veya erisilemiyor.".to_string())
+        .map_err(|_| "Path was not found or is inaccessible.".to_string())
 }
 
 /// Markdown yanitindaki harici baglantiyi yalnizca acik kullanici tiklamasiyla acar.
@@ -695,7 +695,7 @@ fn open_external_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
     let safe_url = validate_external_url(&url)?;
     app.opener()
         .open_url(safe_url, None::<&str>)
-        .map_err(|e| format!("Baglanti acilamadi: {e}"))
+        .map_err(|e| format!("Could not open link: {e}"))
 }
 
 /// Dosyalari calistirmadan Explorer'da gosterir; dizinleri varsayilan gezginde acar.
@@ -705,11 +705,11 @@ fn reveal_local_path(app: tauri::AppHandle, path: String) -> Result<String, Stri
     if canonical.is_dir() {
         app.opener()
             .open_path(canonical.to_string_lossy().into_owned(), None::<&str>)
-            .map_err(|e| format!("Dizin acilamadi: {e}"))?;
+            .map_err(|e| format!("Could not open directory: {e}"))?;
     } else {
         app.opener()
             .reveal_item_in_dir(&canonical)
-            .map_err(|e| format!("Dosya gosterilemedi: {e}"))?;
+            .map_err(|e| format!("Could not reveal file: {e}"))?;
     }
     Ok(canonical.display().to_string())
 }
@@ -721,10 +721,10 @@ fn change_dir(path: &str) -> Result<String, String> {
     let path_obj = Path::new(&path);
 
     if !path_obj.exists() {
-        return Err(format!("Yol bulunamadı: {}", path));
+        return Err(format!("Path not found: {}", path));
     }
     if !path_obj.is_dir() {
-        return Err(format!("Dizin değil: {}", path));
+        return Err(format!("Not a directory: {}", path));
     }
 
     std::env::set_current_dir(path_obj).map_err(|e| e.to_string())?;
@@ -737,7 +737,7 @@ fn run_command(command: &str, args: Vec<String>) -> Result<CommandResult, String
     let output = Command::new(command)
         .args(&args)
         .output()
-        .map_err(|e| format!("Komut çalıştırılamadı: {}", e))?;
+        .map_err(|e| format!("Could not run command: {}", e))?;
 
     Ok(CommandResult {
         stdout: String::from_utf8_lossy(&output.stdout).to_string(),
@@ -1174,10 +1174,10 @@ fn map_ureq_err(e: ureq::Error) -> String {
             };
             match code {
                 400 => {
-                    "Geçersiz istek (400) — model, endpoint veya protokol ayarlarını kontrol edin"
+                    "Invalid request (400) — check the model, endpoint, or protocol settings"
                         .to_string()
                 }
-                402 => "Yetersiz kredi (402) — provider bakiyesini veya harcama sınırını kontrol edin"
+                402 => "Insufficient credit (402) — check the provider balance or spending limit"
                     .to_string(),
                 429 => retry_after
                     .map(|delay| format!("Rate limit (429) — {delay} sonra tekrar deneyin"))
@@ -1185,36 +1185,36 @@ fn map_ureq_err(e: ureq::Error) -> String {
                         "Rate limit (429) — limit penceresi yenilenince tekrar deneyin".to_string()
                     }),
                 503 => retry_after
-                    .map(|delay| format!("Sunucu yükü (503) — {delay} sonra tekrar deneyin"))
+                    .map(|delay| format!("Server overloaded (503) — try again after {delay}"))
                     .unwrap_or_else(|| {
-                        "Sunucu yükü (503) — biraz bekleyip tekrar deneyin".to_string()
+                        "Server overloaded (503) — wait briefly and try again".to_string()
                     }),
                 404 => {
-                    "Bulunamadı (404) — model geçersiz olabilir, /model ile başka seçin".to_string()
+                    "Not found (404) — the model may be invalid; choose another with /model".to_string()
                 }
-                401 | 403 => "Yetki reddedildi — API key geçersiz olabilir".to_string(),
+                401 | 403 => "Authorization denied — the API key may be invalid".to_string(),
                 405 => {
-                    "İzin verilmeyen endpoint (405) — Custom Server endpoint ayarını kontrol edin"
+                    "Endpoint not allowed (405) — check the Custom Server endpoint setting"
                         .to_string()
                 }
-                408 => "Provider isteği zaman aşımına uğradı (408)".to_string(),
-                409 => "Provider isteği mevcut durumla çakıştı (409) — kısa süre sonra yeniden deneyin"
+                408 => "Provider request timed out (408)".to_string(),
+                409 => "Provider request conflicted with the current state (409) — try again shortly"
                     .to_string(),
-                413 => "Provider isteği çok büyük (413) — contexti compact ile küçültün"
+                413 => "Provider request is too large (413) — reduce the context with /compact"
                     .to_string(),
-                422 => "Provider isteği reddetti (422) — payload/protokol uyumunu kontrol edin"
+                422 => "Provider rejected the request (422) — check payload/protocol compatibility"
                     .to_string(),
-                498 => "Provider kapasitesi dolu (498) — kısa süre sonra tekrar deneyin"
+                498 => "Provider capacity is full (498) — try again shortly"
                     .to_string(),
-                502 => "Provider upstream/model hatası (502) — model veya provider geçici olarak kullanılamıyor"
+                502 => "Provider upstream/model error (502) — the model or provider is temporarily unavailable"
                     .to_string(),
-                529 => "Provider aşırı yüklü (529) — kısa süre sonra tekrar deneyin".to_string(),
-                500..=599 => format!("Provider sunucu hatası ({})", code),
-                _ => format!("Provider HTTP hatası ({})", code),
+                529 => "Provider overloaded (529) — try again shortly".to_string(),
+                500..=599 => format!("Provider server error ({})", code),
+                _ => format!("Provider HTTP error ({})", code),
             }
         }
         ureq::Error::Transport(t) => {
-            format!("Bağlantı hatası: {}", redact_sensitive(&t.to_string()))
+            format!("Connection error: {}", redact_sensitive(&t.to_string()))
         }
     }
 }
@@ -1230,7 +1230,7 @@ where
     };
     match send(body) {
         Err(message) if message.starts_with("Rate limit") => Err(message),
-        Err(message) if message.starts_with("Sunucu yükü") => {
+        Err(message) if message.starts_with("Server overloaded") => {
             std::thread::sleep(std::time::Duration::from_secs(3));
             send(body)
         }
@@ -1249,7 +1249,7 @@ where
     };
     match call() {
         Err(e) if e.starts_with("Rate limit") => Err(e),
-        Err(e) if e.starts_with("Sunucu yükü") => {
+        Err(e) if e.starts_with("Server overloaded") => {
             std::thread::sleep(std::time::Duration::from_secs(3));
             call()
         }
@@ -1706,7 +1706,7 @@ async fn chat_completion(
 ) -> Result<ChatResult, String> {
     tauri::async_runtime::spawn_blocking(move || chat_blocking(&config, &messages))
         .await
-        .map_err(|e| format!("İş parçacığı hatası: {}", e))?
+        .map_err(|e| format!("Worker thread error: {}", e))?
 }
 
 fn clean_session_title(raw: &str, fallback: &str) -> String {
@@ -1741,9 +1741,9 @@ fn session_title_blocking(
     let timeout = request_timeout(config, 30);
     let user_excerpt: String = user_message.chars().take(800).collect();
     let assistant_excerpt: String = assistant_text.chars().take(800).collect();
-    let instruction = "Bu konuşmaya kısa ve ayırt edici bir başlık yaz. Kullanıcının dilini kullan. 3-7 kelime olsun. Yalnızca başlığı döndür; tırnak, markdown, emoji veya noktalama ekleme.";
+    let instruction = "Write a short, distinctive title for this conversation. Use the user's language. Use 3–7 words. Return only the title, without quotes, Markdown, emoji, or punctuation.";
     let content = format!(
-        "Kullanıcı isteği:\n{}\n\nYanıt özeti:\n{}",
+        "User request:\n{}\n\nResponse summary:\n{}",
         user_excerpt, assistant_excerpt
     );
     let body = match protocol {
@@ -1793,7 +1793,7 @@ fn session_title_blocking(
     };
     let output: serde_json::Value = send_with_retry(build, &body)?
         .into_json()
-        .map_err(|error| format!("Başlık yanıtı okunamadı: {error}"))?;
+        .map_err(|error| format!("Could not read title response: {error}"))?;
     let raw = match protocol {
         providers::ProviderProtocol::AnthropicMessages => output
             .pointer("/content/0/text")
@@ -1819,7 +1819,7 @@ async fn generate_session_title(
         session_title_blocking(&config, &user_message, &assistant_text)
     })
     .await
-    .map_err(|error| format!("Başlık iş parçacığı hatası: {error}"))?
+    .map_err(|error| format!("Title worker error: {error}"))?
 }
 
 fn stream_body(config: &AppConfig, messages: &[NativeMessage]) -> String {
@@ -1922,7 +1922,7 @@ async fn chat_completion_stream(
         )
     })
     .await
-    .map_err(|error| format!("İş parçacığı hatası: {error}"))?;
+    .map_err(|error| format!("Worker thread error: {error}"))?;
     manager.finish(&manager_id);
     result
 }
@@ -2036,16 +2036,16 @@ fn destructive_check(tool_id: &str, params: &serde_json::Value) -> Option<String
     ];
     for p in hard_blocks {
         if lc.contains(p) {
-            return Some(format!("Yıkıcı komut engellendi: {}", p));
+            return Some(format!("Destructive command blocked: {}", p));
         }
     }
     // "format" tam komut olarak (Format-Table gibi zararsızları yakalamaz)
     if lc == "format" || lc.starts_with("format ") {
-        return Some("format komutu engellendi".to_string());
+        return Some("format command blocked".to_string());
     }
     // Çıplak rm -rf (herhangi bir yol)
     if lc.contains("rm -rf") {
-        return Some("rm -rf engellendi".to_string());
+        return Some("rm -rf blocked".to_string());
     }
     None
 }
@@ -2151,7 +2151,7 @@ fn check_tool(
         return Ok(ToolCheckResult {
             decision: "approve".into(),
             risk,
-            reason: "Kritik sistem yolu — onay zorunlu".into(),
+            reason: "Critical system path — approval required".into(),
         });
     }
 
@@ -2161,7 +2161,7 @@ fn check_tool(
         return Ok(ToolCheckResult {
             decision: "allow".into(),
             risk,
-            reason: "Kalıcı izinli".into(),
+            reason: "Permanently allowed".into(),
         });
     }
 
@@ -2189,9 +2189,9 @@ fn check_tool(
         decision: decision.into(),
         risk,
         reason: if decision == "allow" {
-            "Düşük risk — otomatik".into()
+            "Low risk — automatic".into()
         } else {
-            "Onay gerekiyor".into()
+            "Approval required".into()
         },
     })
 }
@@ -2239,22 +2239,21 @@ fn snapshot_file(path: &str) {
 #[tauri::command]
 fn undo_last() -> Result<String, String> {
     let manifest_path = format!("{}/.agent/undo/undo_manifest.json", dirs_home());
-    let raw =
-        fs::read_to_string(&manifest_path).map_err(|_| "Geri alınacak işlem yok".to_string())?;
+    let raw = fs::read_to_string(&manifest_path).map_err(|_| "Nothing to undo".to_string())?;
     let mut entries: Vec<serde_json::Value> =
         serde_json::from_str(&raw).map_err(|e| e.to_string())?;
-    let last = entries.pop().ok_or("Geri alınacak işlem yok")?;
+    let last = entries.pop().ok_or("Nothing to undo")?;
     let original = last["original"].as_str().unwrap_or("").to_string();
     let backup = last["backup"].as_str().unwrap_or("").to_string();
     if original.is_empty() || backup.is_empty() {
-        return Err("Snapshot kaydı bozuk".into());
+        return Err("Snapshot record is corrupted".into());
     }
-    fs::copy(&backup, &original).map_err(|e| format!("Geri alınamadı: {}", e))?;
+    fs::copy(&backup, &original).map_err(|e| format!("Could not undo: {}", e))?;
     let _ = fs::write(
         &manifest_path,
         serde_json::to_string_pretty(&entries).unwrap_or_default(),
     );
-    Ok(format!("Geri alındı: {}", original))
+    Ok(format!("Undone: {}", original))
 }
 
 // ---- Tool uygulamaları ----
@@ -2265,26 +2264,27 @@ fn tool_write_file(path: &str, content: &str) -> Result<String, String> {
     if let Some(parent) = Path::new(&path).parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    fs::write(&path, content).map_err(|e| format!("{} yazılamadı: {}", path, e))?;
-    Ok(format!("{} yazıldı ({} byte)", path, content.len()))
+    fs::write(&path, content).map_err(|e| format!("Could not write {}: {}", path, e))?;
+    Ok(format!("Wrote {} ({} bytes)", path, content.len()))
 }
 
 fn tool_edit_file(path: &str, old: &str, new: &str) -> Result<String, String> {
     let path = expand_path(path);
     snapshot_file(&path);
-    let content = fs::read_to_string(&path).map_err(|e| format!("{} okunamadı: {}", path, e))?;
+    let content =
+        fs::read_to_string(&path).map_err(|e| format!("Could not read {}: {}", path, e))?;
     if !content.contains(old) {
-        return Err(format!("Aranan metin {} dosyasında bulunamadı", path));
+        return Err(format!("Search text was not found in {}", path));
     }
     let updated = content.replacen(old, new, 1);
-    fs::write(&path, updated).map_err(|e| format!("{} yazılamadı: {}", path, e))?;
-    Ok(format!("{} düzenlendi", path))
+    fs::write(&path, updated).map_err(|e| format!("Could not write {}: {}", path, e))?;
+    Ok(format!("Edited {}", path))
 }
 
 fn tool_create_dir(path: &str) -> Result<String, String> {
     let path = expand_path(path);
-    fs::create_dir_all(&path).map_err(|e| format!("{} oluşturulamadı: {}", path, e))?;
-    Ok(format!("{} oluşturuldu", path))
+    fs::create_dir_all(&path).map_err(|e| format!("Could not create {}: {}", path, e))?;
+    Ok(format!("Created {}", path))
 }
 
 fn tool_delete_file(path: &str) -> Result<String, String> {
@@ -2292,14 +2292,14 @@ fn tool_delete_file(path: &str) -> Result<String, String> {
     let p = Path::new(&path);
     snapshot_file(&path);
     if !p.exists() {
-        return Err(format!("Yol bulunamadı: {}", path));
+        return Err(format!("Path not found: {}", path));
     }
     if p.is_dir() {
         fs::remove_dir_all(p).map_err(|e| e.to_string())?;
-        Ok(format!("{} klasörü silindi", path))
+        Ok(format!("Deleted folder {}", path))
     } else {
         fs::remove_file(p).map_err(|e| e.to_string())?;
-        Ok(format!("{} silindi", path))
+        Ok(format!("Deleted {}", path))
     }
 }
 
@@ -2307,7 +2307,7 @@ fn tool_search_code(path: &str, pattern: &str) -> Result<serde_json::Value, Stri
     let path = expand_path(path);
     let root = Path::new(&path);
     if !root.is_dir() {
-        return Err(format!("Dizin bulunamadı: {}", path));
+        return Err(format!("Directory not found: {}", path));
     }
 
     let mut results: Vec<serde_json::Value> = Vec::new();
@@ -2568,7 +2568,7 @@ fn tool_apply_diff(path: &str, diff_content: &str) -> Result<String, String> {
     let path = expand_path(path);
     let dir = Path::new(&path);
     if !dir.is_dir() {
-        return Err(format!("Dizin bulunamadı: {}", path));
+        return Err(format!("Directory not found: {}", path));
     }
     // Diff'i geçici dosyaya yaz
     let tmp = std::env::temp_dir().join(format!("diff_{}.patch", std::process::id()));
@@ -2578,10 +2578,10 @@ fn tool_apply_diff(path: &str, diff_content: &str) -> Result<String, String> {
         .args(["apply", "--whitespace=nowarn"])
         .arg(&tmp)
         .output()
-        .map_err(|e| format!("git bulunamadı: {}", e))?;
+        .map_err(|e| format!("git was not found: {}", e))?;
     let _ = fs::remove_file(&tmp);
     if output.status.success() {
-        Ok("Yama başarıyla uygulandı".to_string())
+        Ok("Patch applied successfully".to_string())
     } else {
         Err(String::from_utf8_lossy(&output.stderr).to_string())
     }
@@ -2596,7 +2596,7 @@ fn tool_analyze_codebase(
     let root = expand_path(path);
     let root = Path::new(&root);
     if !root.is_dir() {
-        return Err(format!("Dizin bulunamadı: {}", root.display()));
+        return Err(format!("Directory not found: {}", root.display()));
     }
 
     let mut results: Vec<serde_json::Value> = Vec::new();
@@ -2703,7 +2703,7 @@ fn tool_manage_memory(action: &str, key: &str, value: &str) -> Result<String, St
             if Path::new(&path).exists() {
                 Ok(fs::read_to_string(&path).map_err(|e| e.to_string())?)
             } else {
-                Ok("(hafıza boş)".to_string())
+                Ok("(memory is empty)".to_string())
             }
         }
         "add" => {
@@ -2720,15 +2720,15 @@ fn tool_manage_memory(action: &str, key: &str, value: &str) -> Result<String, St
             }
             content.push_str(&format!("- [{}] {}\n", key, value));
             fs::write(&path, content).map_err(|e| e.to_string())?;
-            Ok(format!("Hafızaya eklendi: {} → {}", key, value))
+            Ok(format!("Added to memory: {} → {}", key, value))
         }
         "clear" => {
             if Path::new(&path).exists() {
                 fs::remove_file(&path).map_err(|e| e.to_string())?;
             }
-            Ok("Hafıza temizlendi".to_string())
+            Ok("Memory cleared".to_string())
         }
-        _ => Err("geçersiz action — read / add / clear".into()),
+        _ => Err("invalid action — read / add / clear".into()),
     }
 }
 
@@ -2749,7 +2749,7 @@ fn find_edge() -> Option<std::path::PathBuf> {
 
 /// browser_automation — Edge headless (navigate / extract_text / take_screenshot)
 fn tool_browser_automation(action: &str, url: &str, _selector: &str) -> Result<String, String> {
-    let edge = find_edge().ok_or("Edge bulunamadı")?;
+    let edge = find_edge().ok_or("Edge was not found")?;
     match action {
         "navigate" | "extract_text" => {
             let output = Command::new(&edge)
@@ -2786,16 +2786,16 @@ fn tool_browser_automation(action: &str, url: &str, _selector: &str) -> Result<S
                 .output()
                 .map_err(|e| e.to_string())?;
             if output.status.success() && out_path.exists() {
-                Ok(format!("Ekran görüntüsü: {}", out_str))
+                Ok(format!("Screenshot: {}", out_str))
             } else {
-                Err("Ekran görüntüsü alınamadı".into())
+                Err("Could not capture screenshot".into())
             }
         }
         "click" | "type" => Err(format!(
-            "{} şu an desteklenmiyor — navigate / extract_text / take_screenshot kullanın",
+            "{} is not currently supported — use navigate / extract_text / take_screenshot",
             action
         )),
-        _ => Err("geçersiz action".into()),
+        _ => Err("invalid action".into()),
     }
 }
 
@@ -2824,7 +2824,7 @@ fn tool_github_action(action: &str, message: &str, branch: &str) -> Result<Strin
             let pr = Command::new("gh")
                 .args(["pr", "create", "--title", message, "--body", message])
                 .output()
-                .map_err(|e| format!("gh bulunamadı: {}", e))?;
+                .map_err(|e| format!("gh was not found: {}", e))?;
             if pr.status.success() {
                 Ok(String::from_utf8_lossy(&pr.stdout).to_string())
             } else {
@@ -2863,7 +2863,7 @@ fn tool_github_action(action: &str, message: &str, branch: &str) -> Result<Strin
             }
             Ok(out)
         }
-        _ => Err("geçersiz action — commit / create_pr / view_issues / repo_status".into()),
+        _ => Err("invalid action — commit / create_pr / view_issues / repo_status".into()),
     }
 }
 
@@ -2940,12 +2940,12 @@ fn tool_background_process(
             Ok(serde_json::json!({ "process_id": id, "status": "started" }))
         }
         "stop" => {
-            let p = procs.get_mut(process_id).ok_or("Süreç bulunamadı")?;
+            let p = procs.get_mut(process_id).ok_or("Process was not found")?;
             let _ = p.child.kill();
             Ok(serde_json::json!({ "process_id": process_id, "status": "stopped" }))
         }
         "status" => {
-            let p = procs.get_mut(process_id).ok_or("Süreç bulunamadı")?;
+            let p = procs.get_mut(process_id).ok_or("Process was not found")?;
             if let Some(status) = p.child.try_wait().map_err(|e| e.to_string())? {
                 Ok(
                     serde_json::json!({ "process_id": process_id, "status": "exited", "code": status.code() }),
@@ -2955,13 +2955,13 @@ fn tool_background_process(
             }
         }
         "logs" => {
-            let p = procs.get(process_id).ok_or("Süreç bulunamadı")?;
+            let p = procs.get(process_id).ok_or("Process was not found")?;
             let logs = p.log.lock().map_err(|e| e.to_string())?;
             Ok(
                 serde_json::json!({ "logs": logs.iter().rev().take(50).cloned().collect::<Vec<_>>() }),
             )
         }
-        _ => Err("geçersiz action — start / stop / status / logs".into()),
+        _ => Err("invalid action — start / stop / status / logs".into()),
     }
 }
 
@@ -2988,10 +2988,10 @@ async fn execute_approved_tool(
         let auto_allow = risk == "low" || mode == "autonomous";
         let authorized = approved || in_allow || auto_allow;
         if critical && !in_allow && !approved {
-            return Err("Kritik yol — onay gerekli".into());
+            return Err("Critical path — approval required".into());
         }
         if !authorized {
-            return Err("İzin yok — onay gerekli".into());
+            return Err("Permission denied — approval required".into());
         }
 
         // Tool'u çalıştır
@@ -3000,7 +3000,7 @@ async fn execute_approved_tool(
                 let path = params
                     .get("path")
                     .and_then(|v| v.as_str())
-                    .ok_or("path gerekli")?;
+                    .ok_or("path is required")?;
                 let content = read_file_inner(path)?;
                 // Satır numaralı + aralık desteği
                 let start = params
@@ -3040,14 +3040,14 @@ async fn execute_approved_tool(
                 let pattern = params
                     .get("pattern")
                     .and_then(|v| v.as_str())
-                    .ok_or("pattern gerekli")?;
+                    .ok_or("pattern is required")?;
                 tool_search_code(path, pattern)
             }
             "glob_files" => {
                 let pattern = params
                     .get("pattern")
                     .and_then(|v| v.as_str())
-                    .ok_or("pattern gerekli")?;
+                    .ok_or("pattern is required")?;
                 let files = tool_glob_files(pattern)?;
                 Ok(serde_json::json!({ "files": files, "total": files.len() }))
             }
@@ -3055,11 +3055,11 @@ async fn execute_approved_tool(
                 let path = params
                     .get("path")
                     .and_then(|v| v.as_str())
-                    .ok_or("path gerekli")?;
+                    .ok_or("path is required")?;
                 let content = params
                     .get("content")
                     .and_then(|v| v.as_str())
-                    .ok_or("content gerekli")?;
+                    .ok_or("content is required")?;
                 let msg = tool_write_file(path, content)?;
                 Ok(serde_json::json!({ "message": msg }))
             }
@@ -3067,17 +3067,17 @@ async fn execute_approved_tool(
                 let path = params
                     .get("path")
                     .and_then(|v| v.as_str())
-                    .ok_or("path gerekli")?;
+                    .ok_or("path is required")?;
                 let old = params
                     .get("old_string")
                     .or_else(|| params.get("old"))
                     .and_then(|v| v.as_str())
-                    .ok_or("old_string gerekli")?;
+                    .ok_or("old_string is required")?;
                 let new = params
                     .get("new_string")
                     .or_else(|| params.get("new"))
                     .and_then(|v| v.as_str())
-                    .ok_or("new_string gerekli")?;
+                    .ok_or("new_string is required")?;
                 let msg = tool_edit_file(path, old, new)?;
                 Ok(serde_json::json!({ "message": msg }))
             }
@@ -3085,11 +3085,11 @@ async fn execute_approved_tool(
                 let path = params
                     .get("path")
                     .and_then(|v| v.as_str())
-                    .ok_or("path gerekli")?;
+                    .ok_or("path is required")?;
                 let diff = params
                     .get("diff_content")
                     .and_then(|v| v.as_str())
-                    .ok_or("diff_content gerekli")?;
+                    .ok_or("diff_content is required")?;
                 let msg = tool_apply_diff(path, diff)?;
                 Ok(serde_json::json!({ "message": msg }))
             }
@@ -3097,7 +3097,7 @@ async fn execute_approved_tool(
                 let path = params
                     .get("path")
                     .and_then(|v| v.as_str())
-                    .ok_or("path gerekli")?;
+                    .ok_or("path is required")?;
                 let msg = tool_create_dir(path)?;
                 Ok(serde_json::json!({ "message": msg }))
             }
@@ -3105,7 +3105,7 @@ async fn execute_approved_tool(
                 let path = params
                     .get("path")
                     .and_then(|v| v.as_str())
-                    .ok_or("path gerekli")?;
+                    .ok_or("path is required")?;
                 let msg = tool_delete_file(path)?;
                 Ok(serde_json::json!({ "message": msg }))
             }
@@ -3114,7 +3114,7 @@ async fn execute_approved_tool(
                     .get("cmd")
                     .or_else(|| params.get("command"))
                     .and_then(|v| v.as_str())
-                    .ok_or("cmd gerekli")?
+                    .ok_or("cmd is required")?
                     .trim()
                     .trim_matches('"')
                     .trim_matches('\'');
@@ -3129,7 +3129,7 @@ async fn execute_approved_tool(
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::piped())
                     .spawn()
-                    .map_err(|e| format!("Komut çalıştırılamadı: {}", e))?;
+                    .map_err(|e| format!("Could not run command: {}", e))?;
 
                 let stdout = child.stdout.take();
                 let stderr = child.stderr.take();
@@ -3164,7 +3164,7 @@ async fn execute_approved_tool(
                     }
                     if start.elapsed().as_millis() > timeout_ms as u128 {
                         let _ = child.kill();
-                        return Err(format!("Komut zaman aşımı ({}ms)", timeout_ms));
+                        return Err(format!("Command timed out ({}ms)", timeout_ms));
                     }
                     std::thread::sleep(std::time::Duration::from_millis(80));
                 };
@@ -3181,7 +3181,7 @@ async fn execute_approved_tool(
                 let action = params
                     .get("action")
                     .and_then(|v| v.as_str())
-                    .ok_or("action gerekli")?;
+                    .ok_or("action is required")?;
                 let command = params.get("command").and_then(|v| v.as_str()).unwrap_or("");
                 let process_id = params
                     .get("process_id")
@@ -3193,7 +3193,7 @@ async fn execute_approved_tool(
                 let url = params
                     .get("url")
                     .and_then(|v| v.as_str())
-                    .ok_or("url gerekli")?;
+                    .ok_or("url is required")?;
                 let md = tool_web_fetch(url)?;
                 Ok(serde_json::json!({ "content": md, "url": url }))
             }
@@ -3201,7 +3201,7 @@ async fn execute_approved_tool(
                 let action = params
                     .get("action")
                     .and_then(|v| v.as_str())
-                    .ok_or("action gerekli")?;
+                    .ok_or("action is required")?;
                 let url = params.get("url").and_then(|v| v.as_str()).unwrap_or("");
                 let selector = params
                     .get("selector")
@@ -3214,7 +3214,7 @@ async fn execute_approved_tool(
                 let action = params
                     .get("action")
                     .and_then(|v| v.as_str())
-                    .ok_or("action gerekli")?;
+                    .ok_or("action is required")?;
                 let message = params.get("message").and_then(|v| v.as_str()).unwrap_or("");
                 let branch = params.get("branch").and_then(|v| v.as_str()).unwrap_or("");
                 let msg = tool_github_action(action, message, branch)?;
@@ -3233,7 +3233,7 @@ async fn execute_approved_tool(
                 let action = params
                     .get("action")
                     .and_then(|v| v.as_str())
-                    .ok_or("action gerekli")?;
+                    .ok_or("action is required")?;
                 let key = params.get("key").and_then(|v| v.as_str()).unwrap_or("");
                 let value = params.get("value").and_then(|v| v.as_str()).unwrap_or("");
                 let msg = tool_manage_memory(action, key, value)?;
@@ -3243,7 +3243,7 @@ async fn execute_approved_tool(
                 let sub_task = params
                     .get("sub_task_prompt")
                     .and_then(|v| v.as_str())
-                    .ok_or("sub_task_prompt gerekli")?;
+                    .ok_or("sub_task_prompt is required")?;
                 let model = params
                     .get("model")
                     .and_then(|v| v.as_str())
@@ -3276,7 +3276,7 @@ async fn execute_approved_tool(
         }
     })
     .await
-    .map_err(|e| format!("İş parçacığı hatası: {}", e))?
+    .map_err(|e| format!("Worker thread error: {}", e))?
 }
 
 /// read_file iç implementasyonu (tool + eski komut için ortak)
@@ -3284,10 +3284,10 @@ fn read_file_inner(path: &str) -> Result<String, String> {
     let path = expand_path(path);
     let p = Path::new(&path);
     if !p.exists() {
-        return Err(format!("Dosya bulunamadı: {}", path));
+        return Err(format!("File not found: {}", path));
     }
     if p.is_dir() {
-        return Err(format!("Dizin, dosya değil: {}", path));
+        return Err(format!("Path is a directory, not a file: {}", path));
     }
     fs::read_to_string(p).map_err(|e| e.to_string())
 }
@@ -3297,10 +3297,10 @@ fn list_dir_inner(path: &str) -> Result<Vec<DirEntry>, String> {
     let path = expand_path(path);
     let p = Path::new(&path);
     if !p.exists() {
-        return Err(format!("Yol bulunamadı: {}", path));
+        return Err(format!("Path not found: {}", path));
     }
     if !p.is_dir() {
-        return Err(format!("Dizin değil: {}", path));
+        return Err(format!("Not a directory: {}", path));
     }
     let entries = fs::read_dir(p).map_err(|e| e.to_string())?;
     let mut result: Vec<DirEntry> = Vec::new();

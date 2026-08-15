@@ -33,16 +33,16 @@ export function mergeDiagnosticReport(report, observation = null) {
 
 export function diagnosticStateLabel(state) {
   return ({
-    healthy: "Sağlıklı",
-    degraded: "Kısıtlı",
-    rate_limited: "Limitli",
-    offline: "Çevrimdışı",
-    failed: "Hatalı",
-    ready: "Hazır",
-    unsupported: "Desteklenmiyor",
-    skipped: "Atlandı",
-    checking: "Kontrol ediliyor",
-  })[state] || "Bilinmiyor";
+    healthy: "Healthy",
+    degraded: "Degraded",
+    rate_limited: "Rate limited",
+    offline: "Offline",
+    failed: "Failed",
+    ready: "Ready",
+    unsupported: "Unsupported",
+    skipped: "Skipped",
+    checking: "Checking",
+  })[state] || "Unknown";
 }
 
 export function diagnosticExport(report) {

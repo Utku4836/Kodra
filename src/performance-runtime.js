@@ -45,7 +45,7 @@ export function parsePublicModelCache(raw) {
 export function createFrameCoalescer(callback, options = {}) {
   const requestFrame = options.requestFrame || globalThis.requestAnimationFrame?.bind(globalThis);
   const cancelFrame = options.cancelFrame || globalThis.cancelAnimationFrame?.bind(globalThis);
-  if (typeof requestFrame !== "function") throw new TypeError("requestAnimationFrame gerekli");
+  if (typeof requestFrame !== "function") throw new TypeError("requestAnimationFrame is required");
   let frame = 0;
   let latestArgs = [];
 

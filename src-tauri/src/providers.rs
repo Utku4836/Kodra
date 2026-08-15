@@ -383,7 +383,7 @@ fn safe_endpoint_path(override_path: Option<&str>, fallback: &str) -> Result<Str
         || path.contains("..")
         || path.chars().any(char::is_control)
     {
-        return Err("Endpoint yalnızca güvenli bir relative path olabilir".to_string());
+        return Err("Endpoint must be a safe relative path".to_string());
     }
     Ok(path.trim_start_matches('/').to_string())
 }
@@ -408,27 +408,28 @@ fn is_private_ip(ip: IpAddr) -> bool {
 }
 
 pub fn validate_custom_url(raw: &str, allow_local_network: bool) -> Result<(), String> {
-    let parsed =
-        Url::parse(raw).map_err(|_| "Geçerli bir Custom Server URL'i girin".to_string())?;
+    let parsed = Url::parse(raw).map_err(|_| "Enter a valid Custom Server URL".to_string())?;
     if !matches!(parsed.scheme(), "http" | "https") {
-        return Err("Custom Server yalnızca HTTP veya HTTPS kullanabilir".to_string());
+        return Err("Custom Server can only use HTTP or HTTPS".to_string());
     }
     if !parsed.username().is_empty() || parsed.password().is_some() {
-        return Err("URL içinde kullanıcı adı veya parola kullanılamaz".to_string());
+        return Err("A URL cannot contain a username or password".to_string());
     }
     let host = parsed
         .host_str()
-        .ok_or_else(|| "Custom Server host bilgisi eksik".to_string())?;
+        .ok_or_else(|| "Custom Server host is missing".to_string())?;
     let local_name = host.eq_ignore_ascii_case("localhost")
         || host.ends_with(".localhost")
         || host.ends_with(".local");
     let literal_private = host.parse::<IpAddr>().map(is_private_ip).unwrap_or(false);
 
     if (local_name || literal_private) && !allow_local_network {
-        return Err("Local/private ağ erişimi kapalı; açıkça izin vermelisiniz".to_string());
+        return Err(
+            "Local/private network access is disabled; you must explicitly allow it".to_string(),
+        );
     }
     if parsed.scheme() == "http" && !(allow_local_network && (local_name || literal_private)) {
-        return Err("Remote Custom Server için HTTPS zorunludur".to_string());
+        return Err("HTTPS is required for a remote Custom Server".to_string());
     }
     if !allow_local_network {
         let port = parsed.port_or_known_default().unwrap_or(443);
@@ -437,7 +438,7 @@ pub fn validate_custom_url(raw: &str, allow_local_network: bool) -> Result<(), S
                 .into_iter()
                 .any(|address| is_private_ip(address.ip()))
             {
-                return Err("Custom Server private bir adrese çözümleniyor".to_string());
+                return Err("Custom Server resolves to a private address".to_string());
             }
         }
     }
@@ -457,7 +458,7 @@ pub fn validate_headers(headers: &[SecretHeader]) -> Result<(), String> {
         "set-cookie",
     ];
     if headers.len() > 16 {
-        return Err("En fazla 16 özel header eklenebilir".to_string());
+        return Err("At most 16 custom headers can be added".to_string());
     }
     for header in headers {
         let name = header.name.trim();
@@ -467,16 +468,16 @@ pub fn validate_headers(headers: &[SecretHeader]) -> Result<(), String> {
                 .chars()
                 .all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
         {
-            return Err("Geçersiz özel header adı".to_string());
+            return Err("Invalid custom header name".to_string());
         }
         if BLOCKED
             .iter()
             .any(|blocked| name.eq_ignore_ascii_case(blocked))
         {
-            return Err(format!("{} headerı uygulama tarafından yönetilir", name));
+            return Err(format!("The {} header is managed by the application", name));
         }
         if header.value.len() > 4096 || header.value.contains('\r') || header.value.contains('\n') {
-            return Err(format!("{} header değeri geçersiz", name));
+            return Err(format!("The {} header value is invalid", name));
         }
     }
     Ok(())
@@ -535,7 +536,7 @@ pub fn models_request(
 ) -> Result<ureq::Request, String> {
     let base = normalize_base_url(provider_id, base_url);
     if base.is_empty() {
-        return Err("Base URL gerekli".to_string());
+        return Err("Base URL is required".to_string());
     }
     let protocol = effective_protocol(provider_id, custom_protocol);
     let auth = effective_auth(provider_id, custom_auth);
@@ -576,7 +577,7 @@ pub fn openrouter_key_request(
 ) -> Result<ureq::Request, String> {
     let base = normalize_base_url("openrouter", base_url);
     if base.is_empty() {
-        return Err("Base URL gerekli".to_string());
+        return Err("Base URL is required".to_string());
     }
     let request = shared_http_agent()
         .get(&append_path(&base, "key"))
@@ -596,7 +597,7 @@ pub fn ollama_version_request(base_url: &str, timeout: Duration) -> Result<ureq:
         .unwrap_or(&normalized)
         .trim_end_matches('/');
     if native_base.is_empty() {
-        return Err("Ollama adresi gerekli".to_string());
+        return Err("Ollama URL is required".to_string());
     }
     Ok(shared_http_agent()
         .get(&append_path(native_base, "api/version"))
@@ -673,7 +674,7 @@ fn chat_request_mode(
 ) -> Result<ureq::Request, String> {
     let base = normalize_base_url(provider_id, base_url);
     if base.is_empty() {
-        return Err("Base URL gerekli".to_string());
+        return Err("Base URL is required".to_string());
     }
     let protocol = effective_protocol(provider_id, custom_protocol);
     let auth = effective_auth(provider_id, custom_auth);

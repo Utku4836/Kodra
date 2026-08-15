@@ -80,7 +80,7 @@ export function createResponseMotionController({
   profile = RESPONSE_MOTION_PROFILE,
   wait = defaultWait,
 } = {}) {
-  if (!element) throw new Error("Response motion icin bir DOM elementi gerekli.");
+  if (!element) throw new Error("Response motion requires a DOM element.");
   const documentRef = element.ownerDocument;
   const windowRef = documentRef.defaultView || globalThis.window;
   const clock = windowRef?.performance || globalThis.performance;

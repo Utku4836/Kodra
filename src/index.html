@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="tr">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <link rel="stylesheet" href="styles.css" />
@@ -13,14 +13,14 @@
       <!-- HEADER — trafik lambaları + klasör + model + göstergeler -->
       <header class="title-bar">
         <div class="traffic-lights">
-          <button class="traffic-light red" id="btn-close" title="Kapat"><span class="icon">×</span></button>
-          <button class="traffic-light yellow" id="btn-min" title="Küçült"><span class="icon">—</span></button>
-          <button class="traffic-light green" id="btn-max" title="Tam ekran"><span class="icon">□</span></button>
+          <button class="traffic-light red" id="btn-close" title="Close"><span class="icon">×</span></button>
+          <button class="traffic-light yellow" id="btn-min" title="Minimize"><span class="icon">—</span></button>
+          <button class="traffic-light green" id="btn-max" title="Maximize"><span class="icon">□</span></button>
         </div>
         <div class="path-wrap">
           <span class="path" id="path">~</span>
         </div>
-        <div class="connection-state" id="connection-state" role="status" aria-live="polite" hidden>İnternet yok</div>
+        <div class="connection-state" id="connection-state" role="status" aria-live="polite" hidden>No internet</div>
       </header>
 
       <!-- CONTEXT ÇİZGİSİ — token doluluğu (2px) -->
@@ -40,22 +40,22 @@
                 type="text"
                 class="command-input"
                 id="cmd-input"
-                placeholder="Bir komut yaz..."
+                placeholder="Type a command..."
                 autocomplete="off"
                 spellcheck="false"
                 autofocus
               />
             </div>
             <div class="stream-actions" id="stream-actions" hidden>
-              <button class="stream-stop" id="stream-stop" type="button" title="Yanıtı durdur (Esc)" aria-label="Yanıtı durdur">
+              <button class="stream-stop" id="stream-stop" type="button" title="Stop response (Esc)" aria-label="Stop response">
                 <span class="stream-stop-dot" aria-hidden="true"></span>
-                <span class="stream-stop-label">çalışıyor</span>
+                <span class="stream-stop-label">working</span>
                 <kbd>esc</kbd>
               </button>
             </div>
           </div>
           <div class="dock-meta">
-            <button class="model-chip" id="model-chip" title="Model seç">
+            <button class="model-chip" id="model-chip" title="Select model">
               <span class="model-name" id="model-name">model</span>
             </button>
             <div class="ctx-status" id="ctx-status" data-state="ready" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
@@ -69,10 +69,10 @@
       <div class="suggest-panel" id="suggest-panel" style="display: none;"></div>
 
       <!-- MODAL — model/provider/mod seçimi -->
-      <div class="modal" id="modal" role="dialog" aria-modal="true" aria-label="Seçim menüsü" style="display: none;">
+      <div class="modal" id="modal" role="dialog" aria-modal="true" aria-label="Selection menu" style="display: none;">
         <div class="modal-window">
           <div class="modal-search">
-            <input type="text" class="modal-search-input" id="modal-search-input" placeholder="Ara..." autocomplete="off" spellcheck="false" />
+            <input type="text" class="modal-search-input" id="modal-search-input" placeholder="Search..." autocomplete="off" spellcheck="false" />
           </div>
           <div class="modal-list" id="modal-list"></div>
         </div>
@@ -82,12 +82,12 @@
       <div class="modal confirm-modal" id="session-delete-modal" role="dialog" aria-modal="true" aria-labelledby="session-delete-title" aria-describedby="session-delete-description" style="display: none;">
         <div class="modal-window confirm-window">
           <div class="confirm-copy">
-            <h2 id="session-delete-title">Konuşma silinsin mi?</h2>
+            <h2 id="session-delete-title">Delete conversation?</h2>
             <p id="session-delete-description"></p>
           </div>
           <div class="confirm-actions">
-            <button type="button" class="confirm-button secondary" id="session-delete-cancel">Vazgeç</button>
-            <button type="button" class="confirm-button danger" id="session-delete-confirm">Sil</button>
+            <button type="button" class="confirm-button secondary" id="session-delete-cancel">Cancel</button>
+            <button type="button" class="confirm-button danger" id="session-delete-confirm">Delete</button>
           </div>
         </div>
       </div>
@@ -97,10 +97,10 @@
         <section class="modal-window status-window">
           <header class="status-header">
             <div class="status-heading">
-              <span class="status-provider" id="status-provider">Oturum</span>
+              <span class="status-provider" id="status-provider">Session</span>
               <h2 id="status-title">Model</h2>
             </div>
-            <button class="status-close" id="status-close" type="button" aria-label="Durum menüsünü kapat">×</button>
+            <button class="status-close" id="status-close" type="button" aria-label="Close status">×</button>
           </header>
           <div class="status-content" id="status-content"></div>
         </section>
@@ -112,18 +112,18 @@
           <header class="diagnostics-header">
             <div class="diagnostics-heading">
               <span class="diagnostics-provider" id="diagnostics-provider">Provider</span>
-              <h2 id="diagnostics-title">Bağlantı tanılaması</h2>
+              <h2 id="diagnostics-title">Connection diagnostics</h2>
             </div>
             <div class="diagnostics-header-actions">
-              <span class="diagnostics-overall" id="diagnostics-overall" data-state="checking">Kontrol ediliyor</span>
-              <button class="status-close" id="diagnostics-close" type="button" aria-label="Tanılama menüsünü kapat">×</button>
+              <span class="diagnostics-overall" id="diagnostics-overall" data-state="checking">Checking</span>
+              <button class="status-close" id="diagnostics-close" type="button" aria-label="Close diagnostics">×</button>
             </div>
           </header>
           <div class="diagnostics-content" id="diagnostics-content" aria-live="polite"></div>
           <footer class="diagnostics-actions">
-            <button type="button" id="diagnostics-refresh">Yenile</button>
+            <button type="button" id="diagnostics-refresh">Refresh</button>
             <button type="button" id="diagnostics-deep">Deep test</button>
-            <button type="button" id="diagnostics-copy">Raporu kopyala</button>
+            <button type="button" id="diagnostics-copy">Copy report</button>
           </footer>
         </section>
       </div>
@@ -133,16 +133,16 @@
         <div class="modal-window api-window">
           <div class="api-provider-title" id="api-provider-title"></div>
           <div class="modal-api-field">
-            <input type="password" class="modal-search-input" id="api-key-input" placeholder="API Key girin ve Enter'a basın..." autocomplete="new-password" spellcheck="false" />
+            <input type="password" class="modal-search-input" id="api-key-input" placeholder="Enter API key and press Enter..." autocomplete="new-password" spellcheck="false" />
           </div>
           <div class="custom-provider-fields" id="custom-provider-fields" style="display: none;">
             <label class="api-field-label" for="custom-base-url">Base URL</label>
-            <input type="url" class="modal-search-input api-config-input" id="custom-base-url" placeholder="https://sunucu.example/v1" autocomplete="off" spellcheck="false" />
-            <label class="api-field-label" for="custom-model-id">Varsayılan model (isteğe bağlı)</label>
-            <input type="text" class="modal-search-input api-config-input" id="custom-model-id" placeholder="model-kimliği" autocomplete="off" spellcheck="false" />
+            <input type="url" class="modal-search-input api-config-input" id="custom-base-url" placeholder="https://server.example/v1" autocomplete="off" spellcheck="false" />
+            <label class="api-field-label" for="custom-model-id">Default model (optional)</label>
+            <input type="text" class="modal-search-input api-config-input" id="custom-model-id" placeholder="model-id" autocomplete="off" spellcheck="false" />
             <div class="api-field-grid">
               <div>
-                <label class="api-field-label" for="custom-protocol">Protokol</label>
+                <label class="api-field-label" for="custom-protocol">Protocol</label>
                 <select class="api-config-select" id="custom-protocol">
                   <option value="openai_chat">OpenAI Chat</option>
                   <option value="anthropic_messages">Anthropic Messages</option>
@@ -151,18 +151,18 @@
                 </select>
               </div>
               <div>
-                <label class="api-field-label" for="custom-auth-scheme">Kimlik doğrulama</label>
+                <label class="api-field-label" for="custom-auth-scheme">Authentication</label>
                 <select class="api-config-select" id="custom-auth-scheme">
                   <option value="bearer">Bearer</option>
                   <option value="x_api_key">x-api-key</option>
                   <option value="google_api_key">x-goog-api-key</option>
                   <option value="query_key">?key=</option>
-                  <option value="none">Yok</option>
+                  <option value="none">None</option>
                 </select>
               </div>
             </div>
             <details class="custom-advanced">
-              <summary>Gelişmiş bağlantı ayarları</summary>
+              <summary>Advanced connection settings</summary>
               <div class="custom-advanced-body">
                 <div class="api-field-grid">
                   <div>
@@ -174,13 +174,13 @@
                     <input type="text" class="modal-search-input api-config-input" id="custom-chat-path" placeholder="chat/completions" autocomplete="off" spellcheck="false" />
                   </div>
                 </div>
-                <label class="api-field-label" for="custom-timeout">Timeout (5-120 saniye)</label>
+                <label class="api-field-label" for="custom-timeout">Timeout (5–120 seconds)</label>
                 <input type="number" min="5" max="120" value="45" class="modal-search-input api-config-input" id="custom-timeout" />
-                <label class="api-field-label" for="custom-headers">Gizli headerlar — her satıra Ad: Değer</label>
-                <textarea class="api-config-textarea" id="custom-headers" rows="3" placeholder="X-Tenant: gizli-değer" autocomplete="off" spellcheck="false"></textarea>
+                <label class="api-field-label" for="custom-headers">Secret headers — one Name: Value pair per line</label>
+                <textarea class="api-config-textarea" id="custom-headers" rows="3" placeholder="X-Tenant: secret-value" autocomplete="off" spellcheck="false"></textarea>
                 <label class="api-network-toggle">
                   <input type="checkbox" id="custom-allow-local" />
-                  <span>Local/private ağ erişimine izin ver</span>
+                  <span>Allow local/private network access</span>
                 </label>
               </div>
             </details>
@@ -204,7 +204,7 @@
             <textarea class="approval-edit-input" id="appr-edit-input" spellcheck="false" rows="4"></textarea>
           </div>
           <div class="approval-hint">
-            [y] onayla · [a] oturum için · [p] her zaman · [n] reddet · [e] düzenle · [Esc] iptal
+            [y] approve · [a] for session · [p] always · [n] deny · [e] edit · [Esc] cancel
           </div>
         </div>
       </div>

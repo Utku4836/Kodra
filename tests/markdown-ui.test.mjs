@@ -81,7 +81,7 @@ test("kod yuzeyi dil, satir sayisi, vurgulama, kopyalama ve daraltma sunar", asy
   const figure = root.querySelector(".md-code-block");
   assert.ok(figure.classList.contains("is-collapsed"));
   assert.equal(root.querySelector(".md-code-language").textContent, "JavaScript");
-  assert.equal(root.querySelector(".md-code-count").textContent, "40 satır");
+  assert.equal(root.querySelector(".md-code-count").textContent, "40 lines");
   assert.equal(root.querySelectorAll(".md-code-line").length, 40);
   assert.ok(root.querySelector(".md-token-keyword"));
   assert.ok(root.querySelector(".md-code-meta.md-path"));
@@ -89,7 +89,7 @@ test("kod yuzeyi dil, satir sayisi, vurgulama, kopyalama ve daraltma sunar", asy
   root.querySelector(".md-copy-code").click();
   await settle(dom);
   assert.equal(copied, `${source}\n`);
-  assert.match(opened.notices.at(-1), /kopyaland/i);
+  assert.match(opened.notices.at(-1), /copied/i);
 
   const expand = root.querySelector(".md-expand-code");
   expand.click();

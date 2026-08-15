@@ -151,29 +151,30 @@ fn sessions_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let path = app
         .path()
         .app_config_dir()
-        .map_err(|error| format!("Oturum dizini çözülemedi: {error}"))?
+        .map_err(|error| format!("Could not resolve session directory: {error}"))?
         .join("sessions");
-    fs::create_dir_all(&path).map_err(|error| format!("Oturum dizini oluşturulamadı: {error}"))?;
+    fs::create_dir_all(&path)
+        .map_err(|error| format!("Could not create session directory: {error}"))?;
     Ok(path)
 }
 
 fn checkpoints_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let path = sessions_dir(app)?.join("checkpoints");
     fs::create_dir_all(&path)
-        .map_err(|error| format!("Checkpoint dizini oluşturulamadı: {error}"))?;
+        .map_err(|error| format!("Could not create checkpoint directory: {error}"))?;
     Ok(path)
 }
 
 fn checkpoint_path(app: &tauri::AppHandle, id: &str) -> Result<PathBuf, String> {
     if !safe_id(id) {
-        return Err("Geçersiz oturum kimliği".to_string());
+        return Err("Invalid session ID".to_string());
     }
     Ok(checkpoints_dir(app)?.join(format!("{id}.json")))
 }
 
 fn session_path(app: &tauri::AppHandle, id: &str) -> Result<PathBuf, String> {
     if !safe_id(id) {
-        return Err("Geçersiz oturum kimliği".to_string());
+        return Err("Invalid session ID".to_string());
     }
     Ok(sessions_dir(app)?.join(format!("{id}.json")))
 }
@@ -182,7 +183,7 @@ fn sanitize_title(value: &str) -> String {
     let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
     let title: String = compact.chars().take(64).collect();
     if title.is_empty() {
-        "Yeni konuşma".to_string()
+        "New conversation".to_string()
     } else {
         title
     }
@@ -203,33 +204,33 @@ fn contains_secret_key(value: &Value) -> bool {
 
 fn validate(record: &SessionRecord) -> Result<(), String> {
     if !safe_id(&record.id) {
-        return Err("Geçersiz oturum kimliği".to_string());
+        return Err("Invalid session ID".to_string());
     }
     if record.schema_version != SCHEMA_VERSION {
-        return Err("Desteklenmeyen oturum şeması".to_string());
+        return Err("Unsupported session schema".to_string());
     }
     if record.messages.len() > MAX_MESSAGES {
-        return Err("Oturum mesaj sınırını aşıyor".to_string());
+        return Err("Session exceeds the message limit".to_string());
     }
     if !(0.5..=0.95).contains(&record.compaction.threshold) {
-        return Err("Geçersiz auto-compact eşiği".to_string());
+        return Err("Invalid auto-compact threshold".to_string());
     }
     if record.compaction.compacted_through > record.messages.len() {
-        return Err("Compact sınırı mesaj geçmişini aşıyor".to_string());
+        return Err("Compaction boundary exceeds message history".to_string());
     }
     if record.compaction.summary.len() > 256 * 1024 {
-        return Err("Compact özeti boyut sınırını aşıyor".to_string());
+        return Err("Compaction summary exceeds the size limit".to_string());
     }
     if record.messages.iter().any(contains_secret_key)
         || record.draft.as_ref().is_some_and(contains_secret_key)
     {
-        return Err("Oturum verisi gizli anahtar alanı içeremez".to_string());
+        return Err("Session data cannot contain secret-key fields".to_string());
     }
     if !matches!(
         record.status.as_str(),
         "active" | "interrupted" | "complete"
     ) {
-        return Err("Geçersiz oturum durumu".to_string());
+        return Err("Invalid session status".to_string());
     }
     Ok(())
 }
@@ -239,10 +240,10 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let backup = path.with_extension("json.bak");
     {
         let mut file = fs::File::create(&temp)
-            .map_err(|error| format!("Oturum geçici dosyası açılamadı: {error}"))?;
+            .map_err(|error| format!("Could not open temporary session file: {error}"))?;
         file.write_all(bytes)
             .and_then(|_| file.sync_all())
-            .map_err(|error| format!("Oturum diske yazılamadı: {error}"))?;
+            .map_err(|error| format!("Could not write session to disk: {error}"))?;
     }
     if path.exists() {
         let _ = fs::remove_file(&backup);
@@ -252,7 +253,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
         if backup.exists() {
             let _ = fs::rename(&backup, path);
         }
-        return Err(format!("Oturum atomik olarak değiştirilemedi: {error}"));
+        return Err(format!("Could not replace session atomically: {error}"));
     }
     let _ = fs::remove_file(backup);
     Ok(())
@@ -261,12 +262,12 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
 fn read_record(path: &Path) -> Result<SessionRecord, String> {
     let bytes = fs::read(path)
         .or_else(|_| fs::read(path.with_extension("json.bak")))
-        .map_err(|error| format!("Oturum okunamadı: {error}"))?;
+        .map_err(|error| format!("Could not read session: {error}"))?;
     if bytes.len() > MAX_BYTES {
-        return Err("Oturum dosyası boyut sınırını aşıyor".to_string());
+        return Err("Session file exceeds the size limit".to_string());
     }
     let record: SessionRecord = serde_json::from_slice(&bytes)
-        .map_err(|error| format!("Oturum JSON verisi bozuk: {error}"))?;
+        .map_err(|error| format!("Session JSON is corrupted: {error}"))?;
     validate(&record)?;
     Ok(record)
 }
@@ -310,9 +311,9 @@ pub(crate) fn save(
     record.updated_at = now_ms();
     validate(&record)?;
     let bytes = serde_json::to_vec_pretty(&record)
-        .map_err(|error| format!("Oturum serileştirilemedi: {error}"))?;
+        .map_err(|error| format!("Could not serialize session: {error}"))?;
     if bytes.len() > MAX_BYTES {
-        return Err("Oturum dosyası boyut sınırını aşıyor".to_string());
+        return Err("Session file exceeds the size limit".to_string());
     }
     write_atomic(&session_path(app, &record.id)?, &bytes)?;
     Ok(record)
@@ -325,9 +326,9 @@ pub(crate) fn load(app: &tauri::AppHandle, id: &str) -> Result<SessionRecord, St
 pub(crate) fn checkpoint(app: &tauri::AppHandle, record: SessionRecord) -> Result<(), String> {
     validate(&record)?;
     let bytes = serde_json::to_vec_pretty(&record)
-        .map_err(|error| format!("Checkpoint serileştirilemedi: {error}"))?;
+        .map_err(|error| format!("Could not serialize checkpoint: {error}"))?;
     if bytes.len() > MAX_BYTES {
-        return Err("Checkpoint boyut sınırını aşıyor".to_string());
+        return Err("Checkpoint exceeds the size limit".to_string());
     }
     write_atomic(&checkpoint_path(app, &record.id)?, &bytes)
 }
@@ -335,7 +336,7 @@ pub(crate) fn checkpoint(app: &tauri::AppHandle, record: SessionRecord) -> Resul
 pub(crate) fn list(app: &tauri::AppHandle) -> Result<Vec<SessionSummary>, String> {
     let mut summaries = Vec::new();
     for entry in fs::read_dir(sessions_dir(app)?)
-        .map_err(|error| format!("Oturum listesi okunamadı: {error}"))?
+        .map_err(|error| format!("Could not read session list: {error}"))?
         .flatten()
     {
         let path = entry.path();
@@ -372,7 +373,7 @@ pub(crate) fn delete(app: &tauri::AppHandle, id: &str) -> Result<bool, String> {
     if !path.exists() {
         return Ok(false);
     }
-    fs::remove_file(path).map_err(|error| format!("Oturum silinemedi: {error}"))?;
+    fs::remove_file(path).map_err(|error| format!("Could not delete session: {error}"))?;
     if let Ok(checkpoint) = checkpoint_path(app, id) {
         let _ = fs::remove_file(checkpoint);
     }
@@ -388,7 +389,7 @@ mod tests {
         assert!(safe_id("s-abc_123"));
         assert!(!safe_id("../escape"));
         assert_eq!(sanitize_title("  bir   iki  "), "bir iki");
-        assert_eq!(sanitize_title(""), "Yeni konuşma");
+        assert_eq!(sanitize_title(""), "New conversation");
     }
 
     #[test]

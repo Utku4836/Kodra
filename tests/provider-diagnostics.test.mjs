@@ -61,8 +61,8 @@ test("yalniz ayni providera ait son istek rapora eklenir", () => {
   assert.equal(mergeDiagnosticReport(report, { provider: "groq", latencyMs: 20 }).lastRequest.latencyMs, 20);
 });
 
-test("diagnostic durumlari sabit kullanici etiketlerine donusur", () => {
-  assert.equal(diagnosticStateLabel("healthy"), "Sağlıklı");
-  assert.equal(diagnosticStateLabel("rate_limited"), "Limitli");
-  assert.equal(diagnosticStateLabel("unknown"), "Bilinmiyor");
+test("diagnostic states map to stable user labels", () => {
+  assert.equal(diagnosticStateLabel("healthy"), "Healthy");
+  assert.equal(diagnosticStateLabel("rate_limited"), "Rate limited");
+  assert.equal(diagnosticStateLabel("unknown"), "Unknown");
 });

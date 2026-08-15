@@ -152,6 +152,8 @@ test("yuz hizli secim girdisi kuyruk olusturmadan son hedefte biter", () => {
   assert.equal(selection.activeIndex, 99);
   assert.equal(rows.filter((row) => row.classList.contains("active")).length, 1);
   assert.equal(rows[99].getAttribute("aria-selected"), "true");
+  assert.equal(container.querySelectorAll(".menu-selection-chevron").length, 1);
+  assert.match(selection.marker.style.transform, /2985px/);
 });
 
 test("klavye secimi sabit pointer altinda mouseenter ile ele gecirilemez", () => {
