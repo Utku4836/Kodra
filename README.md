@@ -11,6 +11,9 @@
 > [!NOTE]
 > Kodra is currently a private Windows pre-release. There is no public download yet.
 
+> [!NOTE]
+> The Windows installer is not code-signed yet, so SmartScreen may show "Windows protected your PC" on first run. This is expected — the binaries are built from this repository's source. Choose "More info" → "Run anyway" to proceed.
+
 Kodra started with a simple question: what would it feel like to use an AI coding agent that kept the directness of a terminal without turning every response into a wall of raw text?
 
 The result is a small Tauri desktop app built around one command input. You can switch providers, inspect a model connection, resume an earlier conversation, approve risky actions, and let the agent work with files and commands without leaving the window. Responses are rendered as readable Markdown, while tool activity stays compact and easy to scan.
