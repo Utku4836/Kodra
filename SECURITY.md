@@ -1,6 +1,6 @@
 # Security policy
 
-CLI Terminal UI can read files, run commands, and send selected conversation context to third-party AI providers. Security reports are taken seriously, especially when they involve credential storage, permission bypasses, command execution, path validation, or secret exposure.
+Kodra can read files, run commands, and send selected conversation context to third-party AI providers. Security reports are taken seriously, especially when they involve credential storage, permission bypasses, command execution, path validation, or secret exposure.
 
 ## Supported versions
 

@@ -1,5 +1,5 @@
 {
-  "name": "cli-terminal-ui",
+  "name": "kodra",
   "private": true,
   "version": "0.1.0",
   "description": "A keyboard-first desktop AI workspace with native tools, persistent sessions, and a terminal-inspired interface.",
@@ -7,9 +7,9 @@
   "license": "UNLICENSED",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Utku4836/cli-terminal-ui.git"
+    "url": "git+https://github.com/Utku4836/Kodra.git"
   },
-  "homepage": "https://github.com/Utku4836/cli-terminal-ui",
+  "homepage": "https://github.com/Utku4836/Kodra",
   "engines": {
     "node": ">=20"
   },

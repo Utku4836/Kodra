@@ -1,17 +1,17 @@
 <p align="center">
-  <img src="src-tauri/icons/app-icon-full-transparent-source.png" width="112" alt="CLI Terminal UI application icon">
+  <img src="src-tauri/icons/app-icon-full-transparent-source.png" width="112" alt="Kodra application icon">
 </p>
 
-<h1 align="center">CLI Terminal UI</h1>
+<h1 align="center">Kodra</h1>
 
 <p align="center">
   A keyboard-first desktop AI workspace with native tools, persistent sessions, and a quiet terminal-inspired interface.
 </p>
 
 > [!NOTE]
-> CLI Terminal UI is currently a private Windows pre-release. There is no public download yet.
+> Kodra is currently a private Windows pre-release. There is no public download yet.
 
-CLI Terminal UI started with a simple question: what would it feel like to use an AI coding agent that kept the directness of a terminal without turning every response into a wall of raw text?
+Kodra started with a simple question: what would it feel like to use an AI coding agent that kept the directness of a terminal without turning every response into a wall of raw text?
 
 The result is a small Tauri desktop app built around one command input. You can switch providers, inspect a model connection, resume an earlier conversation, approve risky actions, and let the agent work with files and commands without leaving the window. Responses are rendered as readable Markdown, while tool activity stays compact and easy to scan.
 
@@ -113,8 +113,8 @@ The native layer rejects known destructive shell patterns and always requires ap
 Clone the repository and install the locked JavaScript dependencies:
 
 ```powershell
-git clone https://github.com/Utku4836/cli-terminal-ui.git
-cd cli-terminal-ui
+git clone https://github.com/Utku4836/Kodra.git
+cd Kodra
 npm ci
 ```
 

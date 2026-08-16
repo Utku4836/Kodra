@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use zeroize::Zeroize;
 
-const CREDENTIAL_SERVICE: &str = "com.utkui.cli-terminal-ui";
+const CREDENTIAL_SERVICE: &str = "com.utkui.kodra";
 const SECRET_PREFIX: &str = "provider:";
 static CREDENTIAL_LOCK: Mutex<()> = Mutex::new(());
 

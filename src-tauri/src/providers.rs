@@ -518,7 +518,7 @@ fn apply_auth(
         AuthScheme::QueryKey | AuthScheme::None => {}
     }
     if provider_id == "openrouter" {
-        request = request.set("X-OpenRouter-Title", "CLI Terminal UI");
+        request = request.set("X-OpenRouter-Title", "Kodra");
     }
     request
 }
@@ -1209,7 +1209,7 @@ mod tests {
             .ends_with("/models?supported_parameters=tools"));
         assert_eq!(
             openrouter.header("X-OpenRouter-Title"),
-            Some("CLI Terminal UI")
+            Some("Kodra")
         );
 
         let openrouter_key = openrouter_key_request(

@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "CLI Terminal UI",
+"productName": "Kodra",
   "version": "0.1.0",
-  "identifier": "com.utkui.cli-terminal-ui",
+  "identifier": "com.utkui.kodra",
   "build": {
     "frontendDist": "../src"
   },
@@ -10,7 +10,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "CLI Terminal UI",
+        "title": "Kodra",
         "width": 900,
         "height": 640,
         "minWidth": 480,
@@ -43,10 +43,10 @@
       "msi"
     ],
     "publisher": "Utku",
-    "homepage": "https://github.com/Utku4836/cli-terminal-ui",
+    "homepage": "https://github.com/Utku4836/Kodra",
     "category": "DeveloperTool",
     "shortDescription": "A keyboard-first desktop AI workspace.",
-    "longDescription": "CLI Terminal UI connects multiple AI providers to native coding tools, persistent local sessions, diagnostics, and a permission-aware terminal interface.",
+    "longDescription": "Kodra connects multiple AI providers to native coding tools, persistent local sessions, diagnostics, and a permission-aware terminal interface.",
     "copyright": "Copyright © 2026 Utku. All rights reserved.",
     "icon": [
       "icons/32x32.png",
@@ -57,6 +57,10 @@
     ],
     "windows": {
       "allowDowngrades": false,
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico"
+      },
       "webviewInstallMode": {
         "type": "downloadBootstrapper",
         "silent": true

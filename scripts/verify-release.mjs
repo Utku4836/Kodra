@@ -31,7 +31,7 @@ check(packageJson.private === true, "npm package is private");
 check(packageJson.license === "UNLICENSED", "npm package is not publishable under an accidental public license");
 check(Boolean(packageJson.description), "npm package has a description");
 check(packageJson.author === "Utku", "npm package has a release author");
-check(packageJson.repository?.url?.includes("Utku4836/cli-terminal-ui"), "npm repository metadata is set");
+check(packageJson.repository?.url?.includes("Utku4836/Kodra"), "npm repository metadata is set");
 check(packageJson.engines?.node === ">=20", "Node.js minimum version is declared");
 check(packageLock.version === packageJson.version, "package-lock version matches package.json");
 check(packageLock.packages?.[""]?.version === packageJson.version, "package-lock root package version matches");
@@ -42,7 +42,7 @@ check(Boolean(cargoDescription) && cargoDescription !== "A Tauri App", "Cargo de
 check(!cargoAuthors.includes('"you"'), "Cargo author placeholder is removed");
 check(/^publish\s*=\s*false$/m.test(cargo), "Cargo package publishing is disabled");
 
-check(tauri.productName === "CLI Terminal UI", "product name is human-readable");
+check(tauri.productName === "Kodra", "product name is human-readable");
 check(tauri.app?.windows?.every((window) => window.devtools === false), "production WebView devtools are disabled");
 check(Boolean(tauri.app?.security?.csp), "Tauri Content Security Policy is enabled");
 check(tauri.app?.security?.capabilities?.length === 1 && tauri.app.security.capabilities[0] === "default", "only the declared default capability is enabled");

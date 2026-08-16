@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    cli_terminal_ui_lib::run()
+    kodra_lib::run()
 }
