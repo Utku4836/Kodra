@@ -1696,7 +1696,6 @@ async function selectModalItem() {
     configCache.mode = m;
     persistConfigCache();
     try { await invoke("save_config", { config: configCache }); } catch (e) {}
-    logLine("mod: " + m, "ok");
   } else if (modalMode === "providers") {
     const p = row.item.provider;
     const linked = (configCache && configCache.providers && configCache.providers.length > 0)
@@ -3030,7 +3029,6 @@ async function applySuggest(index) {
     configCache.mode = item.id;
     persistConfigCache();
     try { await invoke("save_config", { config: configCache }); } catch (e) {}
-    logLine("mod: " + item.id, "ok");
   }
 }
 
