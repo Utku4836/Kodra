@@ -175,7 +175,7 @@ The frontend is plain HTML, CSS, and JavaScript. Rust owns credentials, provider
 
 ## Release status
 
-Version `0.1.0` is the first release candidate. The remaining public-release requirement is Windows code signing; unsigned installers can trigger a Microsoft SmartScreen warning.
+Version `0.1.0` is the first public release. Windows installers are available on the [Releases page](https://github.com/Utku4836/Kodra/releases). The installers are not code-signed yet, so Microsoft SmartScreen may show a warning on first run.
 
 See [CHANGELOG.md](CHANGELOG.md), [RELEASE_NOTES.md](RELEASE_NOTES.md), and [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) for the current release state.
 
@@ -185,4 +185,4 @@ Please do not post API keys, provider headers, session files, or private diagnos
 
 ## License
 
-No public license has been granted yet. The repository remains private and the source is currently all rights reserved.
+Kodra is released under the [MIT License](LICENSE). You may use, modify, and distribute the source with attribution.

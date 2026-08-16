@@ -1,8 +1,6 @@
 # Kodra 0.1.0
 
-> Draft release notes. This release has not been published.
-
-Kodra 0.1.0 is the first Windows release candidate. It brings the full provider, tool, session, Markdown, diagnostics, and permission systems into one keyboard-first desktop interface.
+Kodra 0.1.0 is the first public Windows release. It brings the full provider, tool, session, Markdown, diagnostics, and permission systems into one keyboard-first desktop interface.
 
 ## Highlights
 
@@ -15,7 +13,7 @@ Kodra 0.1.0 is the first Windows release candidate. It brings the full provider,
 
 ## Installation
 
-The release candidate produces two Windows installer formats:
+The release produces two Windows installer formats, available on the [Releases page](https://github.com/Utku4836/Kodra/releases):
 
 - NSIS setup executable (`*-setup.exe`)
 - Windows Installer package (`*.msi`)
@@ -35,7 +33,7 @@ Type `/` to see the available commands. The default `smart` permission mode auto
 - Provider catalog quality, quotas, rate-limit headers, and tool support vary by provider and account tier.
 - Custom servers must expose an OpenAI-compatible chat and model API.
 - The app does not yet include an automatic updater.
-- The first public installer still requires Windows code signing and a clean-machine smoke test.
+- The installers are not code-signed; SmartScreen may warn until a signing certificate is configured.
 
 ## Upgrade notes
 

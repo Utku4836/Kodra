@@ -4,9 +4,18 @@ All notable changes to Kodra are recorded here. The project follows [Semantic Ve
 
 ## [Unreleased]
 
+### Added
+
+- Selecting a linked provider now opens its API key screen so the credential can be replaced; entering a new key overwrites the old one.
+
+### Changed
+
+- Released the project under the MIT License and made the repository public.
+- Removed Turkish code comments; all comments and documentation are English.
+
 ### Planned
 
-- Code-sign the Windows installers before the first public download.
+- Code-sign the Windows installers before the next public release.
 - Complete a clean-machine installation smoke test.
 
 ## [0.1.0] - 2026-08-15
