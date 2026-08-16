@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "A keyboard-first desktop AI workspace with native tools, persistent sessions, and a terminal-inspired interface.",
   "author": "Utku",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Utku4836/Kodra.git"
