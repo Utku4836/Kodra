@@ -732,7 +732,7 @@ function parseSecretHeaders(raw) {
     });
 }
 
-function openApiModal(p) {
+function openApiModal(p, prefill) {
   apiModalProvider = p;
   void apiVisibility.open();
   apiKeyInput.value = "";
@@ -742,15 +742,15 @@ function openApiModal(p) {
   const isCustom = p.id === "custom";
   customProviderFields.style.display = isCustom ? "grid" : "none";
   if (isCustom) {
-    customBaseUrl.value = p.baseUrl || "";
-    customModelId.value = p.model || p.defaultModel || "";
-    customProtocol.value = p.protocol || "openai_chat";
-    customAuthScheme.value = p.authScheme || "bearer";
-    customModelsPath.value = p.modelsPath || "";
-    customChatPath.value = p.chatPath || "";
-    customTimeout.value = String(p.requestTimeoutSecs || 45);
+    customBaseUrl.value = prefill?.baseUrl || p.baseUrl || "";
+    customModelId.value = prefill?.model || p.model || p.defaultModel || "";
+    customProtocol.value = prefill?.protocol || p.protocol || "openai_chat";
+    customAuthScheme.value = prefill?.authScheme || p.authScheme || "bearer";
+    customModelsPath.value = prefill?.modelsPath || p.modelsPath || "";
+    customChatPath.value = prefill?.chatPath || p.chatPath || "";
+    customTimeout.value = String(prefill?.requestTimeoutSecs || p.requestTimeoutSecs || 45);
     customHeaders.value = "";
-    customAllowLocal.checked = Boolean(p.allowLocalNetwork);
+    customAllowLocal.checked = Boolean(prefill?.allowLocalNetwork || p.allowLocalNetwork);
     apiKeySubtext.textContent = "Enter server details and press Enter";
     requestAnimationFrame(() => customBaseUrl.focus());
   } else if (!p.requiresApiKey) {
@@ -1734,26 +1734,10 @@ async function selectModalItem() {
       : (configCache && hasProviderCredential(configCache, p) ? [configCache] : []);
     const existing = linked.find((lp) => (lp.id || lp.provider) === p.id);
     if (existing && hasProviderCredential(existing, p)) {
-      configCache.provider = p.id;
-      configCache.baseUrl = existing.baseUrl;
-      configCache.model = existing.model;
-      configCache.protocol = existing.protocol || p.protocol;
-      configCache.authScheme = existing.authScheme || p.authScheme;
-      configCache.secretRef = existing.secretRef || null;
-      configCache.modelsPath = existing.modelsPath || null;
-      configCache.chatPath = existing.chatPath || null;
-      configCache.headerNames = existing.headerNames || [];
-      configCache.requestTimeoutSecs = existing.requestTimeoutSecs || null;
-      configCache.allowLocalNetwork = Boolean(existing.allowLocalNetwork);
-      configCache.contextLimit = existing.contextLimit ?? configCache.contextLimit ?? null;
-      configCache.maxOutputTokens = existing.maxOutputTokens ?? null;
-      configCache.inputPricePerMillion = existing.inputPricePerMillion ?? null;
-      configCache.outputPricePerMillion = existing.outputPricePerMillion ?? null;
-      configCache.cachedInputPricePerMillion = existing.cachedInputPricePerMillion ?? null;
-      providerNameCache = p.name;
-      persistConfigCache();
-      try { await invoke("save_config", { config: configCache }); } catch (e) {}
-      openModelMenu();
+      // Bağlı provider seçildi → API anahtarı ekranını aç; yeni anahtar girilince
+      // eskisinin üzerine yazılır (connect_provider_secure aynı secret referansını kullanır).
+      closeModal();
+      openApiModal(p, existing);
       return;
     }
     closeModal();
