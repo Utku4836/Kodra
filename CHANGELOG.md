@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to CLI Terminal UI are recorded here. The project follows [Semantic Versioning](https://semver.org/) from its first release onward.
+All notable changes to Kodra are recorded here. The project follows [Semantic Versioning](https://semver.org/) from its first release onward.
 
 ## [Unreleased]
 

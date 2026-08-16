@@ -1,8 +1,8 @@
-# CLI Terminal UI 0.1.0
+# Kodra 0.1.0
 
 > Draft release notes. This release has not been published.
 
-CLI Terminal UI 0.1.0 is the first Windows release candidate. It brings the full provider, tool, session, Markdown, diagnostics, and permission systems into one keyboard-first desktop interface.
+Kodra 0.1.0 is the first Windows release candidate. It brings the full provider, tool, session, Markdown, diagnostics, and permission systems into one keyboard-first desktop interface.
 
 ## Highlights
 
