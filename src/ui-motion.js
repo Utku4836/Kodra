@@ -88,9 +88,6 @@ export function createMotionRuntime(options = {}) {
     if (current?.id === id) {
       active.delete(element);
       if (!cancelled && timing.persist) {
-        // Persist the exact computed end state before dropping the WAAPI effect.
-        // Older WebViews/test doubles may not expose commitStyles, so keep the
-        // deterministic inline-style fallback as the compatibility path.
         try {
           if (typeof animation.commitStyles !== "function") throw new Error("commitStyles unavailable");
           animation.commitStyles();
@@ -244,9 +241,6 @@ export function createSelectionController(runtime, options) {
       && !motionOptions.immediate
       && !runtime.reducedMotion();
 
-    // A CSS transition naturally retargets the same compositor layer during
-    // rapid key repeat. Unlike repeatedly cancelling and recreating WAAPI
-    // effects, it cannot leave several rasterized chevron frames behind.
     runtime.cancel(marker);
     marker.classList.toggle("is-animated", shouldAnimate);
     marker.style.opacity = "1";
@@ -269,9 +263,6 @@ export function createSelectionController(runtime, options) {
   return { setRows, moveTo, reset, marker, get activeIndex() { return activeIndex; } };
 }
 
-// Programmatic scrolling can move a row under a stationary pointer and fire a
-// synthetic mouseenter. After keyboard navigation, pointer selection therefore
-// stays locked until the user physically moves or clicks the mouse again.
 export function createSelectionInputController(container, options = {}) {
   const threshold = Math.max(1, Number(options.threshold || 3));
   let owner = "pointer";
@@ -299,8 +290,6 @@ export function createSelectionInputController(container, options = {}) {
     pointer = next;
     if (owner !== "keyboard") return;
     if (!keyboardOrigin) {
-      // İlk olay yalnızca referans noktasıdır; panelin açılması veya scroll
-      // nedeniyle üretilen hareketsiz pointer olayı sahipliği çalmasın.
       keyboardOrigin = next;
       return;
     }
