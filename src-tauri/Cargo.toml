@@ -1,8 +1,11 @@
 [package]
 name = "cli-terminal-ui"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "A keyboard-first desktop AI workspace with native tools and persistent sessions"
+authors = ["Utku"]
+repository = "https://github.com/Utku4836/cli-terminal-ui"
+homepage = "https://github.com/Utku4836/cli-terminal-ui"
+publish = false
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

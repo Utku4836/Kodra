@@ -3272,7 +3272,7 @@ async fn execute_approved_tool(
                     "timeout_seconds": timeout_seconds
                 }))
             }
-            _ => Err(format!("Bilinmeyen tool: {}", tool_id)),
+            _ => Err(format!("Unknown tool: {}", tool_id)),
         }
     })
     .await

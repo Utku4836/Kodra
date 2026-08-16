@@ -1,0 +1,73 @@
+name: Draft Windows Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type "draft" to build a private draft release
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: draft-release
+  cancel-in-progress: false
+
+jobs:
+  draft:
+    name: Build private draft release
+    if: github.ref == 'refs/heads/master' && inputs.confirmation == 'draft'
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Run release checks
+        run: npm run release:check
+
+      - name: Build installers and create a private draft
+        id: release
+        uses: tauri-apps/tauri-action@v0.6.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: CLI Terminal UI v__VERSION__
+          releaseBody: |
+            Private draft release candidate. Review RELEASE_NOTES.md and docs/RELEASE_CHECKLIST.md before publishing.
+          releaseDraft: true
+          prerelease: true
+
+      - name: Apply release notes and upload checksums
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: v${{ steps.release.outputs.appVersion }}
+        run: |
+          gh release edit $env:RELEASE_TAG --draft --prerelease --notes-file RELEASE_NOTES.md
+          $artifacts = Get-ChildItem src-tauri/target/release/bundle -Recurse -File |
+            Where-Object { $_.Extension -in '.exe', '.msi' }
+          $checksums = $artifacts | ForEach-Object {
+            $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
+            "$hash  $($_.Name)"
+          }
+          Set-Content -LiteralPath SHA256SUMS.txt -Value $checksums -Encoding utf8
+          gh release upload $env:RELEASE_TAG SHA256SUMS.txt --clobber

@@ -2086,7 +2086,7 @@ function diagnosticCheckRow(entry) {
   const head = document.createElement("div");
   head.className = "diagnostics-check-head";
   const title = document.createElement("strong");
-  title.textContent = entry.title || entry.id || "Kontrol";
+  title.textContent = entry.title || entry.id || "Check";
   const state = document.createElement("span");
   state.textContent = diagnosticStateLabel(entry.state);
   if (Number.isFinite(Number(entry.latencyMs))) state.textContent += ` · ${Math.round(Number(entry.latencyMs))} ms`;
@@ -2109,7 +2109,7 @@ function renderDiagnosticsLoading(providerId, deep) {
   diagnosticsProvider.textContent = provider?.name || providerId;
   diagnosticsTitle.textContent = deep ? "Deep connection test" : "Connection diagnostics";
   diagnosticsOverall.dataset.state = "checking";
-  diagnosticsOverall.textContent = "Kontrol ediliyor";
+  diagnosticsOverall.textContent = "Checking";
   diagnosticsContent.innerHTML = "";
   const loading = document.createElement("div");
   loading.className = "diagnostics-loading";

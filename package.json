@@ -2,12 +2,31 @@
   "name": "cli-terminal-ui",
   "private": true,
   "version": "0.1.0",
+  "description": "A keyboard-first desktop AI workspace with native tools, persistent sessions, and a terminal-inspired interface.",
+  "author": "Utku",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Utku4836/cli-terminal-ui.git"
+  },
+  "homepage": "https://github.com/Utku4836/cli-terminal-ui",
+  "engines": {
+    "node": ">=20"
+  },
   "type": "module",
   "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "build:app": "tauri build --no-bundle",
     "tauri": "tauri",
     "test": "node --test tests/*.test.mjs",
     "test:markdown": "node --test tests/markdown-ui.test.mjs",
-    "benchmark:runtime": "node benchmarks/runtime.mjs"
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "check:rust": "cargo check --manifest-path src-tauri/Cargo.toml",
+    "audit:js": "npm audit --audit-level=high",
+    "benchmark:runtime": "node benchmarks/runtime.mjs",
+    "verify:release": "node scripts/verify-release.mjs",
+    "release:check": "npm run verify:release && npm run audit:js && npm test && npm run test:rust && npm run check:rust"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",

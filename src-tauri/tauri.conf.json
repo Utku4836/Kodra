@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "cli-terminal-ui",
+  "productName": "CLI Terminal UI",
   "version": "0.1.0",
   "identifier": "com.utkui.cli-terminal-ui",
   "build": {
@@ -10,7 +10,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "cli-terminal-ui",
+        "title": "CLI Terminal UI",
         "width": 900,
         "height": 640,
         "minWidth": 480,
@@ -19,22 +19,48 @@
         "decorations": false,
         "transparent": true,
         "shadow": true,
-        "devtools": true
+        "devtools": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": {
+        "default-src": "'self' customprotocol: asset:",
+        "connect-src": "ipc: http://ipc.localhost",
+        "font-src": "'self' data:",
+        "img-src": "'self' asset: http://asset.localhost blob: data:",
+        "style-src": "'self' 'unsafe-inline'",
+        "script-src": "'self'"
+      },
+      "capabilities": [
+        "default"
+      ]
     }
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [
+      "nsis",
+      "msi"
+    ],
+    "publisher": "Utku",
+    "homepage": "https://github.com/Utku4836/cli-terminal-ui",
+    "category": "DeveloperTool",
+    "shortDescription": "A keyboard-first desktop AI workspace.",
+    "longDescription": "CLI Terminal UI connects multiple AI providers to native coding tools, persistent local sessions, diagnostics, and a permission-aware terminal interface.",
+    "copyright": "Copyright © 2026 Utku. All rights reserved.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "allowDowngrades": false,
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      }
+    }
   }
 }
