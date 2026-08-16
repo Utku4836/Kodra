@@ -9,7 +9,7 @@
 </p>
 
 > [!NOTE]
-> Kodra is currently a private Windows pre-release. There is no public download yet.
+> Kodra is public. Windows installers are available on the [Releases page](https://github.com/Utku4836/Kodra/releases).
 
 > [!NOTE]
 > The Windows installer is not code-signed yet, so SmartScreen may show "Windows protected your PC" on first run. This is expected — the binaries are built from this repository's source. Choose "More info" → "Run anyway" to proceed.
