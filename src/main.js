@@ -1,4 +1,3 @@
-// ===== GUVENLI MARKDOWN + RESPONSE UI V2 =====
 import { renderMarkdownInto } from "./markdown-ui.js";
 import { createResponseMotionController } from "./response-motion.js";
 import {
@@ -28,9 +27,6 @@ import {
 
 const SYSTEM_REDUCED_MOTION = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches || false;
 const MOTION_PREFERENCE_KEY = "cli-ui-motion-preference";
-// Kullanıcı bu uygulama için açıkça tam hareket profilini tercih etti. Değer
-// localStorage'da tutulur; ileride bir ayar yüzeyinden "system" veya "reduced"
-// profiline dönmek mümkün kalır.
 const storedMotionPreference = localStorage.getItem(MOTION_PREFERENCE_KEY);
 const motionProfile = resolveMotionPreference(SYSTEM_REDUCED_MOTION, storedMotionPreference, "full");
 const appMotionPreference = motionProfile.preference;
@@ -45,10 +41,7 @@ void sampleRefreshRate().then((sample) => {
   document.documentElement.style.setProperty("--measured-frame-budget", `${sample.frameBudgetMs}ms`);
 });
 
-// ===== Terminal UI — main.js =====
-// FAZ 7: DOM tabanlı kart mimarisi (xterm yerine)
 
-// ===== Error arka kapısı =====
 const errOverlay = document.getElementById("err-overlay");
 const statusToast = document.getElementById("status-toast");
 const connectionState = document.getElementById("connection-state");
@@ -140,7 +133,6 @@ document.addEventListener("keydown", (ev) => {
   }
 });
 
-// ===== Tauri API =====
 const tauriCore = window.__TAURI__?.core;
 const tauriWindow = window.__TAURI__?.window;
 const invoke = tauriCore?.invoke;
@@ -165,7 +157,6 @@ function mountMarkdown(element, text, options = {}) {
   });
 }
 
-// ===== DOM RENDERER — kart tabanlı akış =====
 const logEl = document.getElementById("log");
 const mainArea = document.querySelector(".main-area");
 let followOutput = true;
@@ -203,7 +194,6 @@ function logLine(text, cls) {
   return div;
 }
 
-// Kullanıcı girdi bloğu — sol çizgili, belirgin
 function userBlock(text) {
   const div = document.createElement("div");
   div.className = "user-block";
@@ -213,7 +203,6 @@ function userBlock(text) {
   return div;
 }
 
-// Nihai ajan yanıtı — markdown render + emoji temizle
 function assistantFinal(text) {
   const div = document.createElement("div");
   div.className = "assistant-final rich-message";
@@ -250,8 +239,6 @@ async function transitionToFinalMarkdown(el, text) {
     return;
   }
 
-  // Streaming span'leri ile semantik Markdown DOM'u arasindaki ani degisimi
-  // iki kisa optik gecis arasinda gizle; metin hicbir zaman kaybolmaz.
   const outgoing = el.animate(
     [{ opacity: 1 }, { opacity: 0.76 }],
     { duration: 72, easing: "cubic-bezier(0.4, 0, 1, 1)", fill: "forwards" },
@@ -316,7 +303,6 @@ async function animatedRichMessage(text, cls = "assistant-response") {
   return renderer.finish(cls);
 }
 
-// AGENT ACTION CARD — tam şeffaf cam, akıcı açılma, ASCII semboller
 function logItem(label, opts) {
   opts = opts || {};
   const item = document.createElement("div");
@@ -326,7 +312,6 @@ function logItem(label, opts) {
   const head = document.createElement("div");
   head.className = "log-item-head";
 
-  // Semboller: [~] düşünce, [>] araç, [OK] başarı, [ERR] hata
   const status = document.createElement("span");
   const st = opts.status || "busy";
   status.className = "log-item-status st-" + st;
@@ -366,7 +351,6 @@ function logItem(label, opts) {
   head.appendChild(time);
   head.appendChild(arrow);
 
-  // Akıcı açılma için grid sarmalayıcı
   const body = document.createElement("div");
   body.className = "log-item-body";
   const inner = document.createElement("div");
@@ -432,10 +416,7 @@ function logItem(label, opts) {
   };
 }
 
-// Düşünce kartı kaldırıldı — reasoning payload'ı gelmiyor;
-// boş düşünce kartları basılmaz (şartlı düşünce), ara açıklamalar dışarıda akar.
 
-// ===== YOL KISALTMA — home → ~ =====
 let HOME_DIR = "";
 let WORKSPACE_DIR = "";
 
@@ -447,9 +428,7 @@ function shortPath(p) {
   return s;
 }
 
-// ===== MARKDOWN + EMOJİ TEMİZLİĞİ =====
 
-// Yol kısaltma — nihai yanıttaki tam Windows yolları ~ ile değiştirilir
 function replacePaths(text) {
   let s = String(text);
   if (HOME_DIR) {
@@ -465,7 +444,6 @@ function stripEmojis(text) {
   );
 }
 
-// Hata kutusu — şeffaf kırmızı cam callout
 function renderAlert(msg) {
   const div = document.createElement("div");
   div.className = "alert-box";
@@ -475,7 +453,6 @@ function renderAlert(msg) {
   return div;
 }
 
-// Mouse spotlight — tek delegated listener, frame başına en fazla bir layout okuması/yazımı.
 let spotlightCard = null;
 let spotlightPoint = null;
 let spotlightRect = null;
@@ -538,7 +515,6 @@ function createStreamRenderer() {
   };
 }
 
-// ===== PROVIDER REGISTRY =====
 let PROVIDER_REGISTRY = {
   nvidia: { id: "nvidia", name: "NVIDIA NIM", baseUrl: "https://integrate.api.nvidia.com/v1", defaultModel: "nvidia/llama-3.3-nemotron-super-49b-v1", requiresApiKey: true },
   openai: { id: "openai", name: "OpenAI", baseUrl: "https://api.openai.com/v1", defaultModel: "gpt-5.6-terra", requiresApiKey: true },
@@ -693,7 +669,6 @@ function loadConfigCache() {
   } catch (e) {}
 }
 
-// ===== API MODAL =====
 const apiModal = document.getElementById("api-modal");
 const apiKeyInput = document.getElementById("api-key-input");
 const apiKeySubtext = document.getElementById("api-key-subtext");
@@ -913,7 +888,6 @@ document.addEventListener("keydown", (ev) => {
   }
 });
 
-// ===== WINDOW CONTROLS =====
 const btnClose = document.getElementById("btn-close");
 const btnMin = document.getElementById("btn-min");
 const btnMax = document.getElementById("btn-max");
@@ -922,7 +896,6 @@ if (btnClose) btnClose.addEventListener("click", async () => { try { await tauri
 if (btnMin) btnMin.addEventListener("click", async () => { try { await tauriWindow?.getCurrentWindow()?.minimize(); } catch (e) {} });
 if (btnMax) btnMax.addEventListener("click", async () => { try { await tauriWindow?.getCurrentWindow()?.toggleMaximize(); } catch (e) {} });
 
-// ===== HEADER — model chip + path + ctx çizgisi =====
 const modelChip = document.getElementById("model-chip");
 const modelNameEl = document.getElementById("model-name");
 const pathEl = document.getElementById("path");
@@ -930,7 +903,6 @@ const ctxFill = document.getElementById("ctx-fill");
 const ctxStatus = document.getElementById("ctx-status");
 const apiCountEl = document.getElementById("api-count");
 
-// API çağrı sayacı — oturumdaki LLM isteği sayısı
 let apiCallCount = 0;
 function countApiCall() {
   apiCallCount++;
@@ -1053,7 +1025,6 @@ function fmtK(n) {
   return n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n);
 }
 
-// Context çizgisi + tooltip
 function defaultSessionUsage() {
   return {
     inputTokens: 0,
@@ -1380,7 +1351,6 @@ function hideSuggest() {
   });
 }
 
-// ===== MODAL (model/provider/mod) =====
 const modal = document.getElementById("modal");
 const modalSearchInput = document.getElementById("modal-search-input");
 const modalList = document.getElementById("modal-list");
@@ -1734,8 +1704,6 @@ async function selectModalItem() {
       : (configCache && hasProviderCredential(configCache, p) ? [configCache] : []);
     const existing = linked.find((lp) => (lp.id || lp.provider) === p.id);
     if (existing && hasProviderCredential(existing, p)) {
-      // Bağlı provider seçildi → API anahtarı ekranını aç; yeni anahtar girilince
-      // eskisinin üzerine yazılır (connect_provider_secure aynı secret referansını kullanır).
       closeModal();
       openApiModal(p, existing);
       return;
@@ -1782,7 +1750,6 @@ if (modalSearchInput) {
   });
 }
 
-// ===== MODEL YÖNETİMİ =====
 async function getModels(force = false, refreshBackend = force) {
   if (!connectionOnline) {
     setConnectionOnline(false);
@@ -1790,8 +1757,6 @@ async function getModels(force = false, refreshBackend = force) {
   }
   const cacheState = modelCacheState(modelCache);
   if (!force && cacheState === "fresh") return modelCache.items;
-  // Stale-while-revalidate: menü son başarılı listeyle anında açılır, ağ yenilemesi
-  // arkada tek bir istek olarak yürür.
   if (!force && cacheState === "stale") {
     if (!modelFetchPromise) {
       modelFetchPromise = getModels(true, true).finally(() => { modelFetchPromise = null; });
@@ -1845,7 +1810,6 @@ async function getModels(force = false, refreshBackend = force) {
     }
   });
   const all = (await Promise.all(requests)).flat();
-  // Boş sonucu cache'leme — sonraki denemede tekrar çekilsin
   if (all.length > 0) {
     modelCache = {
       items: all,
@@ -1867,7 +1831,6 @@ async function selectModel(providerId, id, displayName = "") {
   const config = configCache || (await invoke("get_config"));
   if (!config) return;
 
-  // Provider değişirken yalnızca public metadata ve secret reference taşınır.
   const providerEntry = (config.providers || []).find((p) => (p.id || p.provider) === providerId);
   if (providerEntry) {
     config.baseUrl = providerEntry.baseUrl;
@@ -1947,7 +1910,6 @@ async function openModelMenu() {
     logLine("Could not load model list: " + e, "err");
   }
   if (models.length === 0) {
-    // Fallback: ağ/limit hatası — tüm bağlı provider'ların mevcut modellerini göster
     try {
       const cfg = configCache || (await invoke("get_config"));
       if (cfg) {
@@ -2011,7 +1973,6 @@ function runtimeConfigForProvider(providerId) {
   };
 }
 
-// ===== PROVIDER HEALTH & DIAGNOSTICS =====
 const diagnosticsModal = document.getElementById("diagnostics-modal");
 const diagnosticsSurface = diagnosticsModal.querySelector(".diagnostics-window");
 const diagnosticsProvider = document.getElementById("diagnostics-provider");
@@ -2452,7 +2413,6 @@ async function updateSuggestions() {
   else hideSuggest();
 }
 
-// ===== KOMUT INPUT =====
 const cmdInput = document.getElementById("cmd-input");
 const streamStop = document.getElementById("stream-stop");
 const streamActions = document.getElementById("stream-actions");
@@ -3074,7 +3034,6 @@ async function applySuggest(index) {
   }
 }
 
-// ===== TOOL REGISTRY =====
 const TOOL_RISKS = {
   read_file: "low", list_dir: "low", search_code: "low", glob_files: "low", web_fetch: "low", analyze_codebase: "low",
   write_file: "medium", edit_file: "medium", create_dir: "medium", apply_diff: "medium", manage_memory: "medium", browser_automation: "medium", spawn_sub_agent: "medium",
@@ -3105,7 +3064,6 @@ async function addPersistentAllow(toolId, params) {
   }
 }
 
-// ===== ONAY MODALI + DIFF =====
 const approvalModal = document.getElementById("approval-modal");
 const apprTool = document.getElementById("appr-tool");
 const apprRisk = document.getElementById("appr-risk");
@@ -3297,7 +3255,6 @@ function applyEditToParams() {
   apprEdit.style.display = "none";
 }
 
-// ===== TOOL YÜRÜTME =====
 function buildToolSummary(toolId, result) {
   switch (toolId) {
     case "read_file": return String(result.content || "").slice(0, 2000);
@@ -3339,11 +3296,9 @@ async function executeTool(toolId, params, approved) {
   const cmdStr = params.command || params.cmd || "";
   const target = params.path || params.url || params.pattern || "";
 
-  // Dinamik yol — header'ı son işlem dizinine güncelle
   const activePath = toolWorkingPath(toolId, params);
   if (activePath) updatePath(activePath);
 
-  // AgentActionCard — [>] ile başlar, yol kısaltılır
   const shortTarget = shortPath(target);
   const displayTarget = isCmd ? cmdStr.slice(0, 60) : shortTarget.slice(0, 60);
   const label = toolId + "  " + displayTarget;
@@ -3362,7 +3317,6 @@ async function executeTool(toolId, params, approved) {
       item.setStatus("ok");
     }
 
-    // Codex tarzı diff özeti
     let summary = null;
     if (toolId === "write_file") {
       const n = String(params.content || "").split("\n").length;
@@ -3378,7 +3332,6 @@ async function executeTool(toolId, params, approved) {
       summary = "files: 1 · -1";
     }
 
-    // Body — açılınca görünen içerik (summary + çıktı)
     let bodyParts = [];
     if (summary) bodyParts.push('[summary] ' + summary);
     if (isCmd) {
@@ -3392,7 +3345,6 @@ async function executeTool(toolId, params, approved) {
       if (hidden > 0) bodyParts.push('... ' + hidden + " lines hidden");
       if (result.exit_code !== 0) bodyParts.push('[exit] ' + result.exit_code);
     } else if (toolId === "list_dir") {
-      // 3 s?tunlu esnek grid
       const entries = result.entries || [];
       let gridHtml = '<div class="dir-grid">';
       if (entries.length === 0) gridHtml = '<div class="log-item-body-content">(bo?)</div>';
@@ -3419,11 +3371,9 @@ async function executeTool(toolId, params, approved) {
       if (result.message) bodyParts.push(result.message);
     }
 
-    // write/edit → interaktif diff viewer (VS Code stili)
     if (toolId === "write_file" || toolId === "edit_file" || toolId === "apply_diff") {
       item.body.innerHTML = renderDiffHtml(toolId, params);
     } else if (toolId === "list_dir") {
-      // grid zaten item.body.innerHTML'e yazıldı — dokunma (ezme bug'ı düzeltildi)
     } else {
       item.body.textContent = bodyParts.join("\n\n");
     }
@@ -3440,7 +3390,6 @@ async function executeTool(toolId, params, approved) {
   }
 }
 
-// NATIVE tool çağrısı
 async function processToolItem(call) {
   const toolId = call.name;
   const params = (call.arguments && typeof call.arguments === "object") ? call.arguments : {};
@@ -3480,7 +3429,6 @@ async function processToolItem(call) {
   return await executeTool(toolId, params, true);
 }
 
-// ===== NATIVE CHAT — ReAct döngüsü =====
 async function sendChat(message) {
   if (!invoke) return;
   if (!TauriChannel) {
@@ -3764,7 +3712,6 @@ async function runCommand(cmd) {
   }
 }
 
-// ===== INIT =====
 async function init() {
   loadConfigCache();
 
