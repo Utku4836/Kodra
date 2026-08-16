@@ -28,7 +28,7 @@ const cargoDescription = cargo.match(/^description\s*=\s*"([^"]+)"/m)?.[1];
 const cargoAuthors = cargo.match(/^authors\s*=\s*\[([^\]]+)\]/m)?.[1] || "";
 
 check(packageJson.private === true, "npm package is private");
-check(packageJson.license === "UNLICENSED", "npm package is not publishable under an accidental public license");
+check(packageJson.license === "MIT", "npm package license is MIT");
 check(Boolean(packageJson.description), "npm package has a description");
 check(packageJson.author === "Utku", "npm package has a release author");
 check(packageJson.repository?.url?.includes("Utku4836/Kodra"), "npm repository metadata is set");
