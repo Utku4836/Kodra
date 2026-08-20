@@ -1300,19 +1300,51 @@ function renderThinkingInlineTrack() {
   if (!thinkingInlineTrack) return;
   thinkingInlineTrack.innerHTML = "";
 
+  const count = thinkingModesList.length;
+  if (count === 0) return;
+
   thinkingModesList.forEach((mode, idx) => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = `thinking-inline-step ${idx === thinkingActiveIndex ? "is-selected" : ""}`;
-    btn.textContent = mode.label || mode.id;
-    btn.title = mode.label || mode.id;
-    btn.addEventListener("click", (e) => {
+    // 1. Major Tick Column
+    const col = document.createElement("div");
+    col.className = `ruler-major-col ${idx === thinkingActiveIndex ? "is-selected" : ""}`;
+    col.title = `${mode.label || mode.id} reasoning mode`;
+
+    const label = document.createElement("span");
+    label.className = "ruler-tick-label";
+    label.textContent = mode.label || mode.id;
+
+    const mark = document.createElement("div");
+    mark.className = "ruler-major-mark";
+
+    if (idx === thinkingActiveIndex) {
+      const pin = document.createElement("div");
+      pin.className = "ruler-needle-pin";
+      mark.appendChild(pin);
+    }
+
+    col.appendChild(label);
+    col.appendChild(mark);
+
+    col.addEventListener("click", (e) => {
       e.stopPropagation();
       thinkingActiveIndex = idx;
       void applyThinkingSelection(mode.id);
-      closeThinkingBar();
+      renderThinkingInlineTrack();
     });
-    thinkingInlineTrack.appendChild(btn);
+
+    thinkingInlineTrack.appendChild(col);
+
+    // 2. Minor Ticks between major ticks
+    if (idx < count - 1) {
+      const minorGrp = document.createElement("div");
+      minorGrp.className = "ruler-minor-group";
+      for (let m = 0; m < 2; m++) {
+        const mTick = document.createElement("div");
+        mTick.className = "ruler-minor-tick";
+        minorGrp.appendChild(mTick);
+      }
+      thinkingInlineTrack.appendChild(minorGrp);
+    }
   });
 }
 
