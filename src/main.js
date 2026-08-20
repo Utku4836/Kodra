@@ -520,7 +520,7 @@ let PROVIDER_REGISTRY = {
   openai: { id: "openai", name: "OpenAI", baseUrl: "https://api.openai.com/v1", defaultModel: "gpt-5.6-terra", requiresApiKey: true },
   anthropic: { id: "anthropic", name: "Anthropic", baseUrl: "https://api.anthropic.com/v1", defaultModel: "claude-sonnet-5", requiresApiKey: true },
   gemini: { id: "gemini", name: "Google Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta", defaultModel: "gemini-3.6-flash", requiresApiKey: true },
-  groq: { id: "groq", name: "Groq", baseUrl: "https://api.groq.com/openai/v1", defaultModel: "qwen/qwen3.6-27b", requiresApiKey: true },
+  groq: { id: "groq", name: "Groq", baseUrl: "https://api.groq.com/openai/v1", defaultModel: "llama-3.3-70b-versatile", requiresApiKey: true },
   deepseek: { id: "deepseek", name: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", defaultModel: "deepseek-v4-flash", requiresApiKey: true },
   together: { id: "together", name: "Together AI", baseUrl: "https://api.together.xyz/v1", defaultModel: "zai-org/GLM-5.1", requiresApiKey: true },
   fireworks: { id: "fireworks", name: "Fireworks AI", baseUrl: "https://api.fireworks.ai/inference/v1", defaultModel: "accounts/fireworks/routers/kimi-k2p6-turbo", requiresApiKey: true },
@@ -543,7 +543,6 @@ async function hydrateProviderRegistry() {
 const LEGACY_DEFAULT_MODELS = new Set([
   "gpt-4o",
   "claude-3-5-sonnet-20241022",
-  "llama-3.3-70b-versatile",
   "deepseek-chat",
   "deepseek-reasoner",
   "meta-llama/Llama-3.3-70B-Instruct-Turbo",

@@ -235,9 +235,12 @@ pub fn catalog() -> Vec<ProviderInfo> {
             "Groq",
             "https://api.groq.com/openai/v1",
             &[
-                "qwen/qwen3.6-27b",
-                "openai/gpt-oss-120b",
-                "openai/gpt-oss-20b",
+                "llama-3.3-70b-versatile",
+                "llama-3.1-8b-instant",
+                "deepseek-r1-distill-llama-70b",
+                "qwen-qwq-32b",
+                "mixtral-8x7b-32768",
+                "gemma2-9b-it",
             ],
             true,
             ProviderProtocol::OpenAiChat,
@@ -827,9 +830,9 @@ fn is_known_deprecated(provider_id: &str, model_id: &str) -> bool {
                 || id == "claude-opus-4-20250514"
         }
         "groq" => {
-            id == "llama-3.3-70b-versatile"
-                || id == "llama-3.1-8b-instant"
-                || id.contains("preview")
+            id == "llama-3.1-70b-versatile"
+                || id == "llama3-8b-8192"
+                || id == "llama3-70b-8192"
                 || id.contains("llama3-groq")
         }
         "deepseek" => id == "deepseek-chat" || id == "deepseek-reasoner",
