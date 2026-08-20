@@ -1233,10 +1233,10 @@ function getThinkingModesFor(providerId, modelId) {
 
   // 4. DeepSeek
   if (provider === "deepseek" || model.includes("deepseek") || model.includes("r1")) {
-    if (model.includes("reasoner") || model.includes("r1")) {
-      return [{ id: "reasoner", label: "reasoner" }];
-    }
-    return [{ id: "chat", label: "chat" }];
+    return [
+      { id: "chat", label: "chat" },
+      { id: "reasoner", label: "reasoner (r1)" },
+    ];
   }
 
   // 5. OpenRouter / Groq / Together / Ollama (reasoning models)
@@ -2002,7 +2002,16 @@ async function getModels(force = false, refreshBackend = force) {
   }
   if (!config) return [];
 
-  const providers = config.providers && config.providers.length > 0 ? config.providers : [config];
+  const allProviders = config.providers && config.providers.length > 0 ? config.providers : [config];
+  const providers = allProviders.filter((p) => {
+    const pMeta = PROVIDER_REGISTRY[p.id || p.provider];
+    return hasProviderCredential(p, pMeta);
+  });
+
+  if (providers.length === 0) {
+    return [];
+  }
+
   const failures = [];
   const requests = providers.map(async (p) => {
     const providerId = p.id || p.provider;
@@ -2137,8 +2146,9 @@ async function openModelMenu() {
     try {
       const cfg = configCache || (await invoke("get_config"));
       if (cfg) {
-        const providerList = cfg.providers && cfg.providers.length > 0 ? cfg.providers : [cfg];
-        for (const p of providerList) {
+        const allList = cfg.providers && cfg.providers.length > 0 ? cfg.providers : [cfg];
+        const linkedList = allList.filter((p) => hasProviderCredential(p, PROVIDER_REGISTRY[p.id || p.provider]));
+        for (const p of linkedList) {
           const pName = (PROVIDER_REGISTRY[p.id || p.provider] || {}).name || p.id || "Provider";
           const m = (p.id || p.provider) === cfg.provider ? cfg.model : p.model;
           if (m) {
@@ -2156,7 +2166,11 @@ async function openModelMenu() {
       }
     } catch (e2) {}
   }
-  if (models.length === 0) return;
+  if (models.length === 0) {
+    showStatusToast("Please connect a provider first.");
+    openProviderMenu();
+    return;
+  }
   modalAllItems = models;
   if (transitionFromProviders) transitionModalContent("models", models, 1);
   else openModal("models");
