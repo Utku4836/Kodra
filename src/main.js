@@ -520,7 +520,7 @@ let PROVIDER_REGISTRY = {
   openai: { id: "openai", name: "OpenAI", baseUrl: "https://api.openai.com/v1", defaultModel: "gpt-5.6-terra", requiresApiKey: true },
   anthropic: { id: "anthropic", name: "Anthropic", baseUrl: "https://api.anthropic.com/v1", defaultModel: "claude-sonnet-5", requiresApiKey: true },
   gemini: { id: "gemini", name: "Google Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta", defaultModel: "gemini-3.6-flash", requiresApiKey: true },
-  groq: { id: "groq", name: "Groq", baseUrl: "https://api.groq.com/openai/v1", defaultModel: "qwen/qwen3.6-27b", requiresApiKey: true },
+  groq: { id: "groq", name: "Groq", baseUrl: "https://api.groq.com/openai/v1", defaultModel: "llama-3.3-70b-versatile", requiresApiKey: true },
   deepseek: { id: "deepseek", name: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", defaultModel: "deepseek-v4-flash", requiresApiKey: true },
   together: { id: "together", name: "Together AI", baseUrl: "https://api.together.xyz/v1", defaultModel: "zai-org/GLM-5.1", requiresApiKey: true },
   fireworks: { id: "fireworks", name: "Fireworks AI", baseUrl: "https://api.fireworks.ai/inference/v1", defaultModel: "accounts/fireworks/routers/kimi-k2p6-turbo", requiresApiKey: true },
@@ -543,7 +543,6 @@ async function hydrateProviderRegistry() {
 const LEGACY_DEFAULT_MODELS = new Set([
   "gpt-4o",
   "claude-3-5-sonnet-20241022",
-  "llama-3.3-70b-versatile",
   "deepseek-chat",
   "deepseek-reasoner",
   "meta-llama/Llama-3.3-70B-Instruct-Turbo",
@@ -572,6 +571,8 @@ function upgradeProviderConfig(config) {
         inputPricePerMillion: config.inputPricePerMillion ?? null,
         outputPricePerMillion: config.outputPricePerMillion ?? null,
         cachedInputPricePerMillion: config.cachedInputPricePerMillion ?? null,
+        thinkingMode: config.thinkingMode ?? config.thinking_mode ?? null,
+        thinkingBudget: config.thinkingBudget ?? config.thinking_budget ?? null,
       }];
   entries.forEach((entry) => {
     const id = entry.id || entry.provider;
@@ -599,6 +600,8 @@ function upgradeProviderConfig(config) {
     config.inputPricePerMillion = active.inputPricePerMillion ?? null;
     config.outputPricePerMillion = active.outputPricePerMillion ?? null;
     config.cachedInputPricePerMillion = active.cachedInputPricePerMillion ?? null;
+    config.thinkingMode = active.thinkingMode ?? active.thinking_mode ?? config.thinkingMode ?? config.thinking_mode ?? null;
+    config.thinkingBudget = active.thinkingBudget ?? active.thinking_budget ?? config.thinkingBudget ?? config.thinking_budget ?? null;
   } else {
     const provider = PROVIDER_REGISTRY[config.provider];
     if (provider) {
@@ -898,10 +901,20 @@ if (btnMax) btnMax.addEventListener("click", async () => { try { await tauriWind
 
 const modelChip = document.getElementById("model-chip");
 const modelNameEl = document.getElementById("model-name");
+const thinkingChip = document.getElementById("thinking-chip");
+const thinkingNameEl = document.getElementById("thinking-name");
+const thinkingInlineBar = document.getElementById("thinking-inline-bar");
+const thinkingInlineTrack = document.getElementById("thinking-inline-track");
 const pathEl = document.getElementById("path");
 const ctxFill = document.getElementById("ctx-fill");
+const ctxGaugeFill = document.getElementById("ctx-gauge-fill");
+const ctxPct = document.getElementById("ctx-pct");
 const ctxStatus = document.getElementById("ctx-status");
 const apiCountEl = document.getElementById("api-count");
+
+let thinkingModesList = [];
+let thinkingActiveIndex = 0;
+let isThinkingBarOpen = false;
 
 let apiCallCount = 0;
 function countApiCall() {
@@ -936,10 +949,20 @@ function updateModelChip(model, displayName = "") {
     modelNameEl.textContent = displayName || shortModelName(model);
     modelChip.title = model || "";
   }
+  updateThinkingChip();
+  updateCtxGauge();
 }
 
 if (modelChip) {
   modelChip.addEventListener("click", () => openModelMenu());
+}
+
+if (thinkingChip) {
+  thinkingChip.addEventListener("click", () => toggleThinkingBar());
+}
+
+if (ctxStatus) {
+  ctxStatus.addEventListener("click", () => renderSessionStatus());
 }
 
 function updatePath(cwd) {
@@ -1156,8 +1179,152 @@ function currentContextTokens(history = null) {
   return measured > 0 ? measured : estimateTokens(history || effectiveConversationHistory());
 }
 
+function getThinkingModesFor(providerId, modelId) {
+  const cachedModel = (modelCache?.items || []).find((m) => m.id === modelId);
+
+  // Read reasoning_options / variants directly from the model returned by the API
+  const apiOptions = cachedModel?.reasoningOptions || cachedModel?.reasoning_options || cachedModel?.variants;
+  if (Array.isArray(apiOptions) && apiOptions.length > 0) {
+    return apiOptions.map((opt) => {
+      if (typeof opt === "string") {
+        return { id: opt, label: opt };
+      }
+      if (opt && typeof opt === "object") {
+        return {
+          id: opt.id || opt.name || opt.value || String(opt),
+          label: opt.label || opt.name || opt.id || opt.value || String(opt),
+          budget: opt.budget ?? opt.budgetTokens ?? opt.budget_tokens ?? undefined,
+        };
+      }
+      return { id: String(opt), label: String(opt) };
+    });
+  }
+
+  // If no reasoning options are returned by the API / model, show only standard:
+  return [{ id: "off", label: "standard", budget: 0 }];
+}
+
+function updateThinkingChip(modeId = null) {
+  if (!thinkingNameEl) return;
+  const config = configCache;
+  const providerId = config?.provider || "openai";
+  const modelId = config?.model || "";
+  thinkingModesList = getThinkingModesFor(providerId, modelId);
+  const currentModeId = modeId || config?.thinking_mode || thinkingModesList[0]?.id;
+  const currentIdx = thinkingModesList.findIndex((m) => m.id === currentModeId);
+  thinkingActiveIndex = currentIdx >= 0 ? currentIdx : 0;
+  const activeMode = thinkingModesList[thinkingActiveIndex] || thinkingModesList[0];
+
+  thinkingNameEl.textContent = activeMode?.label || activeMode?.id || "standard";
+  if (thinkingChip) {
+    thinkingChip.title = `Thinking: ${activeMode?.label || activeMode?.id} (Click to change)`;
+  }
+}
+
+function openThinkingBar() {
+  if (!thinkingInlineBar || !thinkingInlineTrack) return;
+  const config = configCache;
+  const providerId = config?.provider || "openai";
+  const modelId = config?.model || "";
+  thinkingModesList = getThinkingModesFor(providerId, modelId);
+  const currentModeId = config?.thinking_mode || thinkingModesList[0]?.id;
+  const currentIdx = thinkingModesList.findIndex((m) => m.id === currentModeId);
+  thinkingActiveIndex = currentIdx >= 0 ? currentIdx : 0;
+
+  renderThinkingInlineTrack();
+  thinkingInlineBar.style.display = "inline-flex";
+  isThinkingBarOpen = true;
+  if (thinkingChip) thinkingChip.classList.add("is-open");
+}
+
+function closeThinkingBar() {
+  if (!thinkingInlineBar) return;
+  thinkingInlineBar.style.display = "none";
+  isThinkingBarOpen = false;
+  if (thinkingChip) thinkingChip.classList.remove("is-open");
+}
+
+function toggleThinkingBar() {
+  if (isThinkingBarOpen) {
+    closeThinkingBar();
+  } else {
+    openThinkingBar();
+  }
+}
+
+function renderThinkingInlineTrack() {
+  if (!thinkingInlineTrack) return;
+  thinkingInlineTrack.innerHTML = "";
+
+  const count = thinkingModesList.length;
+  if (count === 0) return;
+
+  thinkingModesList.forEach((mode, idx) => {
+    // 1. Major Tick Column
+    const col = document.createElement("div");
+    col.className = `ruler-major-col ${idx === thinkingActiveIndex ? "is-selected" : ""}`;
+    col.setAttribute("data-mode-id", mode.id);
+
+    const mark = document.createElement("div");
+    mark.className = "ruler-major-mark";
+    col.appendChild(mark);
+
+    // Hover previews mode in left chip without any box or popup
+    col.addEventListener("mouseenter", () => {
+      if (thinkingNameEl) thinkingNameEl.textContent = mode.label || mode.id;
+    });
+
+    col.addEventListener("mouseleave", () => {
+      const active = thinkingModesList[thinkingActiveIndex];
+      if (thinkingNameEl && active) thinkingNameEl.textContent = active.label || active.id;
+    });
+
+    col.addEventListener("click", (e) => {
+      e.stopPropagation();
+      thinkingActiveIndex = idx;
+      void applyThinkingSelection(mode.id);
+      renderThinkingInlineTrack();
+    });
+
+    thinkingInlineTrack.appendChild(col);
+
+    // 2. Minor Ticks between major ticks (evenly distributed)
+    if (idx < count - 1) {
+      const minorGrp = document.createElement("div");
+      minorGrp.className = "ruler-minor-group";
+      for (let m = 0; m < 2; m++) {
+        const mTick = document.createElement("div");
+        mTick.className = "ruler-minor-tick";
+        minorGrp.appendChild(mTick);
+      }
+      thinkingInlineTrack.appendChild(minorGrp);
+    }
+  });
+}
+
+async function applyThinkingSelection(modeId) {
+  if (!configCache) return;
+  configCache.thinking_mode = modeId;
+  const mode = thinkingModesList.find((m) => m.id === modeId);
+  if (mode && mode.budget !== undefined) {
+    configCache.thinking_budget = mode.budget;
+  }
+  if (Array.isArray(configCache.providers)) {
+    const activeEntry = configCache.providers.find((p) => (p.id || p.provider) === configCache.provider);
+    if (activeEntry) {
+      activeEntry.thinking_mode = modeId;
+      if (mode && mode.budget !== undefined) activeEntry.thinking_budget = mode.budget;
+    }
+  }
+  try {
+    await invoke("save_config", { config: configCache });
+  } catch (e) {}
+  persistConfigCache();
+  updateThinkingChip(modeId);
+}
+
 function updateCtxGauge(history = null, reply = null) {
-  if (!ctxFill) return;
+  if (!ctxStatus) return;
   const config = configCache;
   const limit = contextLimitOf(config);
   const ratio = contextRatioOf(config);
@@ -1165,20 +1332,34 @@ function updateCtxGauge(history = null, reply = null) {
   const total = measuredTotal > 0
     ? measuredTotal
     : currentContextTokens(history || effectiveConversationHistory());
-  const pct = Math.min(100, (total / limit) * 100);
+  const pct = limit > 0 ? Math.min(100, Math.max(0, (total / limit) * 100)) : 0;
 
-  const tone = pct > 90 ? "#f87171" : pct > 70 ? "#facc15" : "#ffffff";
-  ctxFill.style.setProperty("--ctx-angle", (pct * 3.6) + "deg");
-  ctxFill.style.setProperty("--ctx-tone", tone);
-  ctxFill.classList.toggle("mid", pct > 70 && pct <= 90);
-  ctxFill.classList.toggle("high", pct > 90);
-
-  if (ctxStatus) {
-    const source = currentSession?.usage?.source || (measuredTotal > 0 ? "provider" : "estimated");
-    ctxStatus.title = "Context: " + fmtK(total) + " / " + fmtK(limit) + " (" + pct.toFixed(1) + "%) — " + source + " · compact %" + Math.round(ratio * 100);
-    ctxStatus.setAttribute("aria-valuenow", String(Math.round(pct)));
-    ctxStatus.setAttribute("aria-label", "Context " + Math.round(pct) + " percent");
+  // SVG Radial Gauge Math (r = 8.5 -> circumference = 53.407)
+  const circumference = 53.407;
+  if (ctxGaugeFill) {
+    const offset = total > 0
+      ? circumference - Math.max(1.8, (pct / 100) * circumference)
+      : circumference;
+    ctxGaugeFill.style.strokeDashoffset = String(offset);
   }
+
+  if (ctxPct) {
+    ctxPct.textContent = Math.round(pct) + "%";
+  }
+
+  ctxStatus.classList.toggle("mid", pct > 70 && pct <= 90);
+  ctxStatus.classList.toggle("high", pct > 90);
+
+  if (ctxFill) {
+    const tone = pct > 90 ? "#f87171" : pct > 70 ? "#facc15" : "#ffffff";
+    ctxFill.style.setProperty("--ctx-angle", (pct * 3.6) + "deg");
+    ctxFill.style.setProperty("--ctx-tone", tone);
+  }
+
+  const source = currentSession?.usage?.source || (measuredTotal > 0 ? "provider" : "estimated");
+  ctxStatus.title = "Context: " + fmtK(total) + " / " + fmtK(limit) + " (" + pct.toFixed(1) + "%) — " + source + " · Click for session status";
+  ctxStatus.setAttribute("aria-valuenow", String(Math.round(pct)));
+  ctxStatus.setAttribute("aria-label", "Context " + Math.round(pct) + " percent");
 }
 
 // ===== SYSTEM PROMPT =====
@@ -1245,7 +1426,7 @@ function buildSystemPrompt(config, homeDir) {
 
 // ===== SUGGEST PANEL =====
 const suggestPanel = document.getElementById("suggest-panel");
-const COMMANDS = ["/model", "/provider", "/diagnostics", "/permissions", "/status", "/compact", "/sessions", "/resume", "/delete-session", "/new", "/undo", "/clear"];
+const COMMANDS = ["/model", "/thinking", "/provider", "/diagnostics", "/permissions", "/status", "/compact", "/sessions", "/resume", "/delete-session", "/new", "/undo", "/clear"];
 let suggestMode = null;
 let suggestItems = [];
 let suggestIndex = 0;
@@ -1751,24 +1932,6 @@ if (modalSearchInput) {
 }
 
 async function getModels(force = false, refreshBackend = force) {
-  if (!connectionOnline) {
-    setConnectionOnline(false);
-    return modelCache?.items || [];
-  }
-  const cacheState = modelCacheState(modelCache);
-  if (!force && cacheState === "fresh") return modelCache.items;
-  if (!force && cacheState === "stale") {
-    if (!modelFetchPromise) {
-      modelFetchPromise = getModels(true, true).finally(() => { modelFetchPromise = null; });
-    }
-    return modelCache.items;
-  }
-  const fallbackItems = modelCache?.items || [];
-  if (!force && modelFetchPromise) return modelFetchPromise;
-  if (!force) {
-    modelFetchPromise = getModels(true, false).finally(() => { modelFetchPromise = null; });
-    return modelFetchPromise;
-  }
   let config;
   try {
     config = configCache || (await invoke("get_config"));
@@ -1776,9 +1939,47 @@ async function getModels(force = false, refreshBackend = force) {
     logLine("Could not read config: " + e, "err");
     return [];
   }
-  if (!config) return [];
+  if (!config) {
+    modelCache = null;
+    try { localStorage.removeItem(PUBLIC_MODEL_CACHE_KEY); } catch (_) {}
+    return [];
+  }
 
-  const providers = config.providers && config.providers.length > 0 ? config.providers : [config];
+  const allProviders = config.providers && config.providers.length > 0 ? config.providers : (config.provider ? [config] : []);
+  const providers = allProviders.filter((p) => {
+    const pMeta = PROVIDER_REGISTRY[p.id || p.provider];
+    return hasProviderCredential(p, pMeta);
+  });
+
+  if (providers.length === 0) {
+    modelCache = null;
+    try { localStorage.removeItem(PUBLIC_MODEL_CACHE_KEY); } catch (_) {}
+    return [];
+  }
+
+  const connectedIds = new Set(providers.map((p) => p.id || p.provider));
+
+  if (!connectionOnline) {
+    setConnectionOnline(false);
+    return (modelCache?.items || []).filter((m) => connectedIds.has(m.providerId));
+  }
+
+  const cacheState = modelCacheState(modelCache);
+  const cachedConnected = (modelCache?.items || []).filter((m) => connectedIds.has(m.providerId));
+  if (!force && cacheState === "fresh" && cachedConnected.length > 0) return cachedConnected;
+  if (!force && cacheState === "stale" && cachedConnected.length > 0) {
+    if (!modelFetchPromise) {
+      modelFetchPromise = getModels(true, true).finally(() => { modelFetchPromise = null; });
+    }
+    return cachedConnected;
+  }
+  const fallbackItems = cachedConnected;
+  if (!force && modelFetchPromise) return modelFetchPromise;
+  if (!force) {
+    modelFetchPromise = getModels(true, false).finally(() => { modelFetchPromise = null; });
+    return modelFetchPromise;
+  }
+
   const failures = [];
   const requests = providers.map(async (p) => {
     const providerId = p.id || p.provider;
@@ -1913,8 +2114,9 @@ async function openModelMenu() {
     try {
       const cfg = configCache || (await invoke("get_config"));
       if (cfg) {
-        const providerList = cfg.providers && cfg.providers.length > 0 ? cfg.providers : [cfg];
-        for (const p of providerList) {
+        const allList = cfg.providers && cfg.providers.length > 0 ? cfg.providers : [cfg];
+        const linkedList = allList.filter((p) => hasProviderCredential(p, PROVIDER_REGISTRY[p.id || p.provider]));
+        for (const p of linkedList) {
           const pName = (PROVIDER_REGISTRY[p.id || p.provider] || {}).name || p.id || "Provider";
           const m = (p.id || p.provider) === cfg.provider ? cfg.model : p.model;
           if (m) {
@@ -1932,7 +2134,11 @@ async function openModelMenu() {
       }
     } catch (e2) {}
   }
-  if (models.length === 0) return;
+  if (models.length === 0) {
+    showStatusToast("Please connect a provider first.");
+    openProviderMenu();
+    return;
+  }
   modalAllItems = models;
   if (transitionFromProviders) transitionModalContent("models", models, 1);
   else openModal("models");
@@ -3624,6 +3830,12 @@ async function runCommand(cmd) {
         await openModelMenu();
         break;
 
+      case "thinking":
+      case "mode":
+      case "reasoning":
+        toggleThinkingBar();
+        break;
+
       case "provider":
         if (!args[0]) {
           await openProviderMenu();
@@ -3744,28 +3956,22 @@ async function init() {
         updatePath("~");
       }
     } else {
-      const cachedProvider = configCache ? PROVIDER_REGISTRY[configCache.provider] : null;
-      if (configCache && hasProviderCredential(configCache, cachedProvider)) {
-        isInitialized = true;
-        updateModelChip(configCache.model);
-        const p = PROVIDER_REGISTRY[configCache.provider];
-        if (p) providerNameCache = p.name;
-      } else {
-        modalAllItems = Object.values(PROVIDER_REGISTRY).map((p) => ({ id: p.id, name: p.name, provider: p }));
-        openModal("providers");
-      }
-    }
-  } catch (e) {
-    const cachedProvider = configCache ? PROVIDER_REGISTRY[configCache.provider] : null;
-    if (configCache && hasProviderCredential(configCache, cachedProvider)) {
-      isInitialized = true;
-      updateModelChip(configCache.model);
-      const p = PROVIDER_REGISTRY[configCache.provider];
-      if (p) providerNameCache = p.name;
-    } else {
+      configCache = null;
+      modelCache = null;
+      try { localStorage.removeItem("appConfig"); } catch (e) {}
+      try { localStorage.removeItem(PUBLIC_MODEL_CACHE_KEY); } catch (e) {}
+      isInitialized = false;
       modalAllItems = Object.values(PROVIDER_REGISTRY).map((p) => ({ id: p.id, name: p.name, provider: p }));
       openModal("providers");
     }
+  } catch (e) {
+    configCache = null;
+    modelCache = null;
+    try { localStorage.removeItem("appConfig"); } catch (_) {}
+    try { localStorage.removeItem(PUBLIC_MODEL_CACHE_KEY); } catch (_) {}
+    isInitialized = false;
+    modalAllItems = Object.values(PROVIDER_REGISTRY).map((p) => ({ id: p.id, name: p.name, provider: p }));
+    openModal("providers");
   }
   if (isInitialized) {
     try {
@@ -3778,6 +3984,52 @@ async function init() {
     }
   }
 }
+
+document.addEventListener("keydown", (event) => {
+  if (!isThinkingBarOpen) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopPropagation();
+    closeThinkingBar();
+    return;
+  }
+  if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+    event.preventDefault();
+    event.stopPropagation();
+    if (thinkingModesList.length > 0) {
+      thinkingActiveIndex = (thinkingActiveIndex - 1 + thinkingModesList.length) % thinkingModesList.length;
+      renderThinkingInlineTrack();
+      const selected = thinkingModesList[thinkingActiveIndex];
+      if (selected) void applyThinkingSelection(selected.id);
+    }
+    return;
+  }
+  if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+    event.preventDefault();
+    event.stopPropagation();
+    if (thinkingModesList.length > 0) {
+      thinkingActiveIndex = (thinkingActiveIndex + 1) % thinkingModesList.length;
+      renderThinkingInlineTrack();
+      const selected = thinkingModesList[thinkingActiveIndex];
+      if (selected) void applyThinkingSelection(selected.id);
+    }
+    return;
+  }
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    event.stopPropagation();
+    const selected = thinkingModesList[thinkingActiveIndex];
+    if (selected) void applyThinkingSelection(selected.id);
+    closeThinkingBar();
+  }
+});
+
+document.addEventListener("click", (event) => {
+  if (!isThinkingBarOpen) return;
+  if (!event.target.closest(".dock-meta-left")) {
+    closeThinkingBar();
+  }
+});
 
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "hidden") return;
