@@ -112,6 +112,7 @@ pub struct ModelInfo {
     pub supports_tools: Option<bool>,
     pub supports_reasoning: Option<bool>,
     pub supports_vision: Option<bool>,
+    pub reasoning_options: Option<Vec<String>>,
     pub status: String,
     pub recommended: bool,
 }
@@ -1017,19 +1018,83 @@ pub fn parse_models(
             cached_input_price_per_million: price_per_million(
                 &row,
                 &["/pricing/input_cache_read", "/pricing/cached_input"],
-                &[
-                    "/pricing/cached_input_per_million",
-                    "/cached_input_price_per_million",
-                ],
-            ),
-            supports_tools,
-            supports_reasoning,
-            supports_vision,
-            status: model_status(&id, &row),
-            provider_id: provider_id.to_string(),
-            id,
-            recommended: false,
-        });
+            let reasoning_options = {
+                let opts = string_array(
+                    &row,
+                    &[
+                        "/reasoning_options",
+                        "/reasoningOptions",
+                        "/capabilities/reasoning_options",
+                        "/supported_parameters/reasoning_effort/values",
+                        "/reasoning/efforts",
+                        "/variants",
+                    ],
+                );
+                if !opts.is_empty() {
+                    Some(opts)
+                } else {
+                    None
+                }
+            };
+            models.push(ModelInfo {
+                display_name: value_string(&row, &["/display_name", "/displayName", "/name"])
+                    .unwrap_or_else(|| id.clone())
+                    .trim_start_matches("models/")
+                    .to_string(),
+                context_window: value_u64(
+                    &row,
+                    &[
+                        "/context_length",
+                        "/context_window",
+                        "/max_input_tokens",
+                        "/inputTokenLimit",
+                        "/limits/context_window",
+                    ],
+                ),
+                max_output_tokens: value_u64(
+                    &row,
+                    &[
+                        "/max_tokens",
+                        "/max_output_tokens",
+                        "/outputTokenLimit",
+                        "/limits/max_output_tokens",
+                    ],
+                ),
+                input_price_per_million: price_per_million(
+                    &row,
+                    &["/pricing/prompt", "/pricing/input", "/price/input"],
+                    &[
+                        "/pricing/input_per_million",
+                        "/pricing/inputPerMillion",
+                        "/input_price_per_million",
+                    ],
+                ),
+                output_price_per_million: price_per_million(
+                    &row,
+                    &["/pricing/completion", "/pricing/output", "/price/output"],
+                    &[
+                        "/pricing/output_per_million",
+                        "/pricing/outputPerMillion",
+                        "/output_price_per_million",
+                    ],
+                ),
+                cached_input_price_per_million: price_per_million(
+                    &row,
+                    &["/pricing/input_cache_read", "/pricing/cached_input"],
+                    &[
+                        "/pricing/cached_input_per_million",
+                        "/cached_input_price_per_million",
+                    ],
+                ),
+                supports_tools,
+                supports_reasoning,
+                supports_vision,
+                reasoning_options,
+                status: model_status(&id, &row),
+                provider_id: provider_id.to_string(),
+                id,
+                recommended: false,
+            });
     }
 
     let preferences = provider_info(provider_id).preferred_models;

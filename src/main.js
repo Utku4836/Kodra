@@ -1181,73 +1181,27 @@ function currentContextTokens(history = null) {
 }
 
 function getThinkingModesFor(providerId, modelId) {
-  const provider = String(providerId || "").toLowerCase();
-  const model = String(modelId || "").toLowerCase();
-
-  // Find model metadata from cache if available
   const cachedModel = (modelCache?.items || []).find((m) => m.id === modelId);
-  const isReasoning = cachedModel?.supportsReasoning ?? (
-    model.includes("claude-3-7") || model.includes("claude-3.7") ||
-    model.includes("thinking") || model.includes("2.5") ||
-    model.includes("o1") || model.includes("o3") || model.includes("gpt-5") ||
-    model.includes("r1") || model.includes("reasoner") || model.includes("qwq")
-  );
 
-  // If model is standard non-reasoning, return single direct stop
-  if (!isReasoning) {
-    return [{ id: "off", label: "standard", budget: 0 }];
+  // Read reasoning_options / variants directly from the model returned by the API
+  const apiOptions = cachedModel?.reasoningOptions || cachedModel?.reasoning_options || cachedModel?.variants;
+  if (Array.isArray(apiOptions) && apiOptions.length > 0) {
+    return apiOptions.map((opt) => {
+      if (typeof opt === "string") {
+        return { id: opt, label: opt };
+      }
+      if (opt && typeof opt === "object") {
+        return {
+          id: opt.id || opt.name || opt.value || String(opt),
+          label: opt.label || opt.name || opt.id || opt.value || String(opt),
+          budget: opt.budget ?? opt.budgetTokens ?? opt.budget_tokens ?? undefined,
+        };
+      }
+      return { id: String(opt), label: String(opt) };
+    });
   }
 
-  // 1. Anthropic / Claude
-  if (provider === "anthropic" || model.includes("claude-3-7") || model.includes("claude-3.7")) {
-    return [
-      { id: "off", label: "off", budget: 0 },
-      { id: "1k", label: "1k", budget: 1024 },
-      { id: "4k", label: "4k", budget: 4096 },
-      { id: "16k", label: "16k", budget: 16384 },
-      { id: "64k", label: "64k", budget: 64000 },
-    ];
-  }
-
-  // 2. Google Gemini Thinking
-  if (provider === "gemini" || model.includes("gemini")) {
-    if (model.includes("thinking") || model.includes("2.5") || model.includes("flash-thinking")) {
-      return [
-        { id: "off", label: "off", budget: 0 },
-        { id: "2k", label: "2k", budget: 2048 },
-        { id: "8k", label: "8k", budget: 8192 },
-        { id: "32k", label: "32k", budget: 32768 },
-      ];
-    }
-    return [{ id: "off", label: "standard", budget: 0 }];
-  }
-
-  // 3. OpenAI Reasoning Models (o1, o3, o3-mini, gpt-5, etc.)
-  if (provider === "openai" || model.includes("o1") || model.includes("o3") || model.includes("gpt-5")) {
-    return [
-      { id: "low", label: "low" },
-      { id: "medium", label: "medium" },
-      { id: "high", label: "high" },
-    ];
-  }
-
-  // 4. DeepSeek
-  if (provider === "deepseek" || model.includes("deepseek") || model.includes("r1")) {
-    return [
-      { id: "chat", label: "chat" },
-      { id: "reasoner", label: "reasoner (r1)" },
-    ];
-  }
-
-  // 5. OpenRouter / Groq / Together / Ollama (reasoning models)
-  if (model.includes("r1") || model.includes("reasoner") || model.includes("thinking") || model.includes("qwq")) {
-    return [
-      { id: "low", label: "low" },
-      { id: "medium", label: "medium" },
-      { id: "high", label: "high" },
-    ];
-  }
-
+  // If no reasoning options are returned by the API / model, show only standard:
   return [{ id: "off", label: "standard", budget: 0 }];
 }
 
