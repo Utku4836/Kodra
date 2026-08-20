@@ -1264,17 +1264,28 @@ function renderThinkingInlineTrack() {
     // 1. Major Tick Column
     const col = document.createElement("div");
     col.className = `ruler-major-col ${idx === thinkingActiveIndex ? "is-selected" : ""}`;
-    col.title = `${mode.label || mode.id} reasoning mode`;
+    col.setAttribute("data-mode-id", mode.id);
 
-    const label = document.createElement("span");
-    label.className = "ruler-tick-label";
-    label.textContent = mode.label || mode.id;
+    // Subtle floating tooltip shown cleanly on hover
+    const tooltip = document.createElement("span");
+    tooltip.className = "ruler-tick-tooltip";
+    tooltip.textContent = mode.label || mode.id;
 
     const mark = document.createElement("div");
     mark.className = "ruler-major-mark";
 
-    col.appendChild(label);
+    col.appendChild(tooltip);
     col.appendChild(mark);
+
+    // Hover previews mode in left chip
+    col.addEventListener("mouseenter", () => {
+      if (thinkingName) thinkingName.textContent = mode.label || mode.id;
+    });
+
+    col.addEventListener("mouseleave", () => {
+      const active = thinkingModesList[thinkingActiveIndex];
+      if (thinkingName && active) thinkingName.textContent = active.label || active.id;
+    });
 
     col.addEventListener("click", (e) => {
       e.stopPropagation();

@@ -1617,20 +1617,31 @@ body {
   position: relative;
 }
 
+.dock-meta-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 100%;
+}
+
 .dock-meta-left .model-chip {
   display: inline-flex;
   align-items: center;
   max-width: 240px;
   padding: 0;
+  margin: 0;
   border: 0;
   background: transparent;
   text-align: left;
   overflow: hidden;
   cursor: pointer;
+  height: 100%;
+  line-height: 1;
 }
 
 .model-name {
-  display: block;
+  display: inline-block;
   max-width: 240px;
   overflow: hidden;
   color: #686d74;
@@ -1638,6 +1649,8 @@ body {
   letter-spacing: -0.015em;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 1;
+  vertical-align: middle;
   transition: color 0.16s ease;
 }
 
@@ -1646,10 +1659,14 @@ body {
 }
 
 .dock-sep {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: #444951;
-  font-size: 13px;
+  font: 500 13px/1 var(--font-mono);
   user-select: none;
   line-height: 1;
+  vertical-align: middle;
 }
 
 /* ===== MINIMAL INLINE THINKING LABEL & SCRUBBER ===== */
@@ -1657,6 +1674,7 @@ body {
   display: inline-flex;
   align-items: center;
   padding: 0;
+  margin: 0;
   border: 0;
   background: transparent;
   color: #686d74;
@@ -1664,6 +1682,9 @@ body {
   letter-spacing: -0.015em;
   cursor: pointer;
   user-select: none;
+  height: 100%;
+  line-height: 1;
+  vertical-align: middle;
   transition: color 0.16s ease;
 }
 
@@ -1675,18 +1696,24 @@ body {
   color: #ffffff;
 }
 
+#thinking-name {
+  display: inline-block;
+  line-height: 1;
+  vertical-align: middle;
+}
+
 /* ===== MINIMAL RULER / NUMBER LINE SCRUBBER ===== */
 .thinking-ruler-wrap {
   position: relative;
   display: inline-flex;
   align-items: center;
-  height: 20px;
-  margin-left: 2px;
+  height: 100%;
+  margin-left: 4px;
   padding: 0;
   background: transparent;
   border: 0;
   transform-origin: left center;
-  animation: ruler-extend 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: ruler-extend 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 @keyframes ruler-extend {
@@ -1706,7 +1733,7 @@ body {
   align-items: center;
   height: 20px;
   gap: 0;
-  padding: 0 4px 0 10px;
+  padding: 0 4px 0 8px;
 }
 
 /* One continuous unbroken straight axis line */
@@ -1716,8 +1743,9 @@ body {
   left: 0;
   right: 0;
   top: 50%;
+  transform: translateY(-50%);
   height: 1px;
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.22);
   pointer-events: none;
 }
 
@@ -1727,31 +1755,10 @@ body {
   align-items: center;
   justify-content: center;
   height: 20px;
-  min-width: 48px;
+  width: 24px;
   cursor: pointer;
   user-select: none;
-  padding: 0 4px;
-}
-
-.ruler-tick-label {
-  position: absolute;
-  bottom: 12px;
-  left: 50%;
-  transform: translateX(-50%);
-  font: 500 10px/1 var(--font-mono);
-  color: #5d636b;
-  letter-spacing: -0.01em;
-  white-space: nowrap;
-  transition: color 0.14s ease;
-}
-
-.ruler-major-col:hover .ruler-tick-label {
-  color: #b8bdc4;
-}
-
-.ruler-major-col.is-selected .ruler-tick-label {
-  color: #ffffff;
-  font-weight: 600;
+  padding: 0;
 }
 
 .ruler-major-mark {
@@ -1761,13 +1768,14 @@ body {
   transform: translate(-50%, -50%);
   width: 1px;
   height: 10px;
-  background: rgba(255, 255, 255, 0.38);
+  background: rgba(255, 255, 255, 0.35);
   border-radius: 1px;
-  transition: background-color 0.14s ease, height 0.14s ease;
+  transition: background-color 0.14s ease, height 0.14s ease, width 0.14s ease;
 }
 
 .ruler-major-col:hover .ruler-major-mark {
-  background: rgba(255, 255, 255, 0.7);
+  height: 12px;
+  background: rgba(255, 255, 255, 0.8);
 }
 
 .ruler-major-col.is-selected .ruler-major-mark {
@@ -1776,12 +1784,39 @@ body {
   background: #ffffff;
 }
 
+/* Subtle floating tooltip on hover/scrub */
+.ruler-tick-tooltip {
+  position: absolute;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%) translateY(2px);
+  padding: 2px 6px;
+  background: #191b1f;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 4px;
+  font: 500 10.5px/1.2 var(--font-mono);
+  color: #ffffff;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.14s ease, transform 0.14s ease, visibility 0.14s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  z-index: 10;
+}
+
+.ruler-major-col:hover .ruler-tick-tooltip {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+
 .ruler-minor-group {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: space-evenly;
-  width: 28px;
+  width: 22px;
   height: 20px;
   pointer-events: none;
 }
