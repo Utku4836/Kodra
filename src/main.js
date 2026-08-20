@@ -572,6 +572,8 @@ function upgradeProviderConfig(config) {
         inputPricePerMillion: config.inputPricePerMillion ?? null,
         outputPricePerMillion: config.outputPricePerMillion ?? null,
         cachedInputPricePerMillion: config.cachedInputPricePerMillion ?? null,
+        thinkingMode: config.thinkingMode ?? config.thinking_mode ?? null,
+        thinkingBudget: config.thinkingBudget ?? config.thinking_budget ?? null,
       }];
   entries.forEach((entry) => {
     const id = entry.id || entry.provider;
@@ -599,6 +601,8 @@ function upgradeProviderConfig(config) {
     config.inputPricePerMillion = active.inputPricePerMillion ?? null;
     config.outputPricePerMillion = active.outputPricePerMillion ?? null;
     config.cachedInputPricePerMillion = active.cachedInputPricePerMillion ?? null;
+    config.thinkingMode = active.thinkingMode ?? active.thinking_mode ?? config.thinkingMode ?? config.thinking_mode ?? null;
+    config.thinkingBudget = active.thinkingBudget ?? active.thinking_budget ?? config.thinkingBudget ?? config.thinking_budget ?? null;
   } else {
     const provider = PROVIDER_REGISTRY[config.provider];
     if (provider) {
@@ -898,10 +902,34 @@ if (btnMax) btnMax.addEventListener("click", async () => { try { await tauriWind
 
 const modelChip = document.getElementById("model-chip");
 const modelNameEl = document.getElementById("model-name");
+const thinkingChip = document.getElementById("thinking-chip");
+const thinkingNameEl = document.getElementById("thinking-name");
+const thinkingIconEl = document.getElementById("thinking-icon");
 const pathEl = document.getElementById("path");
 const ctxFill = document.getElementById("ctx-fill");
+const ctxGaugeFill = document.getElementById("ctx-gauge-fill");
+const ctxPct = document.getElementById("ctx-pct");
 const ctxStatus = document.getElementById("ctx-status");
 const apiCountEl = document.getElementById("api-count");
+
+const thinkingModal = document.getElementById("thinking-modal");
+const thinkingClose = document.getElementById("thinking-close");
+const thinkingSliderTrack = document.getElementById("thinking-slider-track");
+const thinkingOptionsList = document.getElementById("thinking-options-list");
+const thinkingProviderTag = document.getElementById("thinking-provider-tag");
+const thinkingModalTitle = document.getElementById("thinking-modal-title");
+
+let thinkingReturnFocus = null;
+let thinkingModesList = [];
+let thinkingActiveIndex = 0;
+
+const thinkingVisibility = createVisibilityController(uiMotion, {
+  root: thinkingModal,
+  surface: thinkingModal?.querySelector(".thinking-window"),
+  openDuration: UI_MOTION.fast,
+  surfaceOpenDuration: UI_MOTION.dialog,
+  closeDuration: UI_MOTION.fast,
+});
 
 let apiCallCount = 0;
 function countApiCall() {
@@ -936,10 +964,24 @@ function updateModelChip(model, displayName = "") {
     modelNameEl.textContent = displayName || shortModelName(model);
     modelChip.title = model || "";
   }
+  updateThinkingChip();
+  updateCtxGauge();
 }
 
 if (modelChip) {
   modelChip.addEventListener("click", () => openModelMenu());
+}
+
+if (thinkingChip) {
+  thinkingChip.addEventListener("click", () => openThinkingModal());
+}
+
+if (thinkingClose) {
+  thinkingClose.addEventListener("click", () => closeThinkingModal());
+}
+
+if (ctxStatus) {
+  ctxStatus.addEventListener("click", () => renderSessionStatus());
 }
 
 function updatePath(cwd) {
@@ -1156,8 +1198,150 @@ function currentContextTokens(history = null) {
   return measured > 0 ? measured : estimateTokens(history || effectiveConversationHistory());
 }
 
+function getThinkingModesFor(providerId, modelId) {
+  const provider = String(providerId || "").toLowerCase();
+  const model = String(modelId || "").toLowerCase();
+
+  if (provider === "anthropic" || model.includes("claude-3-7")) {
+    return [
+      { id: "fast", name: "Fast", icon: "⚡", tag: "Direct", budget: 0, desc: "Standard direct response without extended thinking" },
+      { id: "balanced", name: "Balanced", icon: "⚖️", tag: "2k tokens", budget: 2048, desc: "Standard step-by-step reasoning" },
+      { id: "deep", name: "Deep", icon: "🧠", tag: "8k tokens", budget: 8192, desc: "Deep analytical thinking & thorough code analysis" },
+    ];
+  }
+
+  if (provider === "gemini" || model.includes("gemini")) {
+    return [
+      { id: "fast", name: "Fast", icon: "⚡", tag: "0 budget", budget: 0, desc: "Ultra-fast direct response generation" },
+      { id: "balanced", name: "Balanced", icon: "⚖️", tag: "2k budget", budget: 2048, desc: "Balanced reasoning effort" },
+      { id: "deep", name: "Deep", icon: "🧠", tag: "8k budget", budget: 8192, desc: "Maximum thinking depth for complex reasoning" },
+    ];
+  }
+
+  if (provider === "openai" || model.includes("o1") || model.includes("o3") || model.includes("gpt-5")) {
+    return [
+      { id: "fast", name: "Fast", icon: "⚡", tag: "Low effort", desc: "Low reasoning latency for standard tasks" },
+      { id: "balanced", name: "Balanced", icon: "⚖️", tag: "Medium", desc: "Balanced reasoning effort" },
+      { id: "deep", name: "Deep", icon: "🧠", tag: "High effort", desc: "Extensive reasoning for complex algorithms" },
+    ];
+  }
+
+  return [
+    { id: "fast", name: "Fast", icon: "⚡", tag: "Quick", desc: "Quick responses with minimal latency" },
+    { id: "balanced", name: "Balanced", icon: "⚖️", tag: "Standard", desc: "Balanced performance and reasoning" },
+    { id: "deep", name: "Deep", icon: "🧠", tag: "Deep", desc: "Thorough multi-step problem solving" },
+  ];
+}
+
+function updateThinkingChip(modeId = null) {
+  if (!thinkingChip || !thinkingNameEl) return;
+  const config = configCache;
+  const providerId = config?.provider || "openai";
+  const modelId = config?.model || "";
+  const modes = getThinkingModesFor(providerId, modelId);
+  const currentModeId = modeId || config?.thinking_mode || "fast";
+  const activeMode = modes.find((m) => m.id === currentModeId) || modes[0];
+
+  thinkingNameEl.textContent = activeMode.name;
+  if (thinkingIconEl) thinkingIconEl.textContent = activeMode.icon;
+  thinkingChip.title = `Thinking Mode: ${activeMode.name} (${activeMode.tag}) — Click to change`;
+  thinkingChip.className = `thinking-chip mode-${activeMode.id}`;
+}
+
+function openThinkingModal() {
+  if (!thinkingModal) return;
+  const config = configCache;
+  const providerId = config?.provider || "openai";
+  const modelId = config?.model || "";
+  thinkingModesList = getThinkingModesFor(providerId, modelId);
+  const currentModeId = config?.thinking_mode || "fast";
+  const currentIdx = thinkingModesList.findIndex((m) => m.id === currentModeId);
+  thinkingActiveIndex = currentIdx >= 0 ? currentIdx : 0;
+
+  if (thinkingProviderTag) {
+    const pMeta = PROVIDER_REGISTRY[providerId];
+    thinkingProviderTag.textContent = (pMeta?.name || providerId).toUpperCase() + " · REASONING";
+  }
+  if (thinkingModalTitle) {
+    thinkingModalTitle.textContent = `${shortModelName(modelId || "Model")} Thinking`;
+  }
+
+  renderThinkingModal();
+  thinkingReturnFocus = document.activeElement;
+  void thinkingVisibility.open();
+  revealMenuContent(thinkingModal, ".thinking-header, .thinking-slider-track, .thinking-options-list", {
+    delay: 45,
+    stagger: 20,
+    maxItems: 5,
+  });
+}
+
+function closeThinkingModal() {
+  if (!thinkingModal || thinkingModal.style.display === "none") return;
+  void thinkingVisibility.close();
+  const target = thinkingReturnFocus && typeof thinkingReturnFocus.focus === "function" ? thinkingReturnFocus : cmdInput;
+  target.focus();
+  thinkingReturnFocus = null;
+}
+
+function renderThinkingModal() {
+  if (!thinkingSliderTrack || !thinkingOptionsList) return;
+  thinkingSliderTrack.innerHTML = "";
+  thinkingOptionsList.innerHTML = "";
+
+  thinkingModesList.forEach((mode, idx) => {
+    const trackItem = document.createElement("button");
+    trackItem.type = "button";
+    trackItem.className = `thinking-track-item ${idx === thinkingActiveIndex ? "is-selected" : ""}`;
+    trackItem.innerHTML = `<span class="track-icon">${mode.icon}</span><span>${mode.name}</span>`;
+    trackItem.addEventListener("click", () => {
+      thinkingActiveIndex = idx;
+      void applyThinkingSelection(mode.id);
+    });
+    thinkingSliderTrack.appendChild(trackItem);
+
+    const card = document.createElement("div");
+    card.className = `thinking-option-card ${idx === thinkingActiveIndex ? "is-active" : ""}`;
+    card.innerHTML = `
+      <div class="thinking-card-header">
+        <span class="thinking-card-name">${mode.icon} ${mode.name}</span>
+        <span class="thinking-card-tag">${mode.tag}</span>
+      </div>
+      <div class="thinking-card-desc">${escapeHtml(mode.desc)}</div>
+    `;
+    card.addEventListener("click", () => {
+      thinkingActiveIndex = idx;
+      void applyThinkingSelection(mode.id);
+    });
+    thinkingOptionsList.appendChild(card);
+  });
+}
+
+async function applyThinkingSelection(modeId) {
+  if (!configCache) return;
+  configCache.thinking_mode = modeId;
+  const mode = thinkingModesList.find((m) => m.id === modeId);
+  if (mode && mode.budget !== undefined) {
+    configCache.thinking_budget = mode.budget;
+  }
+  if (Array.isArray(configCache.providers)) {
+    const activeEntry = configCache.providers.find((p) => (p.id || p.provider) === configCache.provider);
+    if (activeEntry) {
+      activeEntry.thinking_mode = modeId;
+      if (mode && mode.budget !== undefined) activeEntry.thinking_budget = mode.budget;
+    }
+  }
+  try {
+    await invoke("save_config", { config: configCache });
+  } catch (e) {}
+  persistConfigCache();
+  updateThinkingChip(modeId);
+  closeThinkingModal();
+  logLine(`Thinking mode set to ${mode ? mode.name : modeId} (${mode ? mode.tag : ""})`, "sys");
+}
+
 function updateCtxGauge(history = null, reply = null) {
-  if (!ctxFill) return;
+  if (!ctxStatus) return;
   const config = configCache;
   const limit = contextLimitOf(config);
   const ratio = contextRatioOf(config);
@@ -1165,20 +1349,34 @@ function updateCtxGauge(history = null, reply = null) {
   const total = measuredTotal > 0
     ? measuredTotal
     : currentContextTokens(history || effectiveConversationHistory());
-  const pct = Math.min(100, (total / limit) * 100);
+  const pct = limit > 0 ? Math.min(100, Math.max(0, (total / limit) * 100)) : 0;
 
-  const tone = pct > 90 ? "#f87171" : pct > 70 ? "#facc15" : "#ffffff";
-  ctxFill.style.setProperty("--ctx-angle", (pct * 3.6) + "deg");
-  ctxFill.style.setProperty("--ctx-tone", tone);
-  ctxFill.classList.toggle("mid", pct > 70 && pct <= 90);
-  ctxFill.classList.toggle("high", pct > 90);
-
-  if (ctxStatus) {
-    const source = currentSession?.usage?.source || (measuredTotal > 0 ? "provider" : "estimated");
-    ctxStatus.title = "Context: " + fmtK(total) + " / " + fmtK(limit) + " (" + pct.toFixed(1) + "%) — " + source + " · compact %" + Math.round(ratio * 100);
-    ctxStatus.setAttribute("aria-valuenow", String(Math.round(pct)));
-    ctxStatus.setAttribute("aria-label", "Context " + Math.round(pct) + " percent");
+  // SVG Radial Gauge Math (r = 8.5 -> circumference = 53.407)
+  const circumference = 53.407;
+  if (ctxGaugeFill) {
+    const offset = total > 0
+      ? circumference - Math.max(1.8, (pct / 100) * circumference)
+      : circumference;
+    ctxGaugeFill.style.strokeDashoffset = String(offset);
   }
+
+  if (ctxPct) {
+    ctxPct.textContent = Math.round(pct) + "%";
+  }
+
+  ctxStatus.classList.toggle("mid", pct > 70 && pct <= 90);
+  ctxStatus.classList.toggle("high", pct > 90);
+
+  if (ctxFill) {
+    const tone = pct > 90 ? "#f87171" : pct > 70 ? "#facc15" : "#ffffff";
+    ctxFill.style.setProperty("--ctx-angle", (pct * 3.6) + "deg");
+    ctxFill.style.setProperty("--ctx-tone", tone);
+  }
+
+  const source = currentSession?.usage?.source || (measuredTotal > 0 ? "provider" : "estimated");
+  ctxStatus.title = "Context: " + fmtK(total) + " / " + fmtK(limit) + " (" + pct.toFixed(1) + "%) — " + source + " · Click for session status";
+  ctxStatus.setAttribute("aria-valuenow", String(Math.round(pct)));
+  ctxStatus.setAttribute("aria-label", "Context " + Math.round(pct) + " percent");
 }
 
 // ===== SYSTEM PROMPT =====
@@ -1245,7 +1443,7 @@ function buildSystemPrompt(config, homeDir) {
 
 // ===== SUGGEST PANEL =====
 const suggestPanel = document.getElementById("suggest-panel");
-const COMMANDS = ["/model", "/provider", "/diagnostics", "/permissions", "/status", "/compact", "/sessions", "/resume", "/delete-session", "/new", "/undo", "/clear"];
+const COMMANDS = ["/model", "/thinking", "/provider", "/diagnostics", "/permissions", "/status", "/compact", "/sessions", "/resume", "/delete-session", "/new", "/undo", "/clear"];
 let suggestMode = null;
 let suggestItems = [];
 let suggestIndex = 0;
@@ -3624,6 +3822,12 @@ async function runCommand(cmd) {
         await openModelMenu();
         break;
 
+      case "thinking":
+      case "mode":
+      case "reasoning":
+        openThinkingModal();
+        break;
+
       case "provider":
         if (!args[0]) {
           await openProviderMenu();
@@ -3779,10 +3983,51 @@ async function init() {
   }
 }
 
+if (thinkingModal) {
+  thinkingModal.addEventListener("click", (event) => {
+    if (event.target === thinkingModal) closeThinkingModal();
+  });
+}
+
+document.addEventListener("keydown", (event) => {
+  if (!thinkingModal || thinkingModal.style.display === "none") return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopPropagation();
+    closeThinkingModal();
+    return;
+  }
+  if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+    event.preventDefault();
+    event.stopPropagation();
+    if (thinkingModesList.length > 0) {
+      thinkingActiveIndex = (thinkingActiveIndex - 1 + thinkingModesList.length) % thinkingModesList.length;
+      renderThinkingModal();
+    }
+    return;
+  }
+  if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+    event.preventDefault();
+    event.stopPropagation();
+    if (thinkingModesList.length > 0) {
+      thinkingActiveIndex = (thinkingActiveIndex + 1) % thinkingModesList.length;
+      renderThinkingModal();
+    }
+    return;
+  }
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    event.stopPropagation();
+    const selected = thinkingModesList[thinkingActiveIndex];
+    if (selected) void applyThinkingSelection(selected.id);
+  }
+});
+
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "hidden") return;
   suggestVisibility.finish();
   modalVisibility.finish();
+  thinkingVisibility.finish();
   apiVisibility.finish();
   sessionDeleteVisibility.finish();
   statusVisibility.finish();

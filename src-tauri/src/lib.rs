@@ -96,6 +96,10 @@ struct AppConfig {
     request_timeout_secs: Option<u64>,
     #[serde(default)]
     allow_local_network: bool,
+    #[serde(default)]
+    thinking_mode: Option<String>,
+    #[serde(default)]
+    thinking_budget: Option<u64>,
 }
 
 fn model_cache_key(config: &AppConfig) -> ModelCacheKey {
@@ -184,6 +188,10 @@ struct LinkedProvider {
     output_price_per_million: Option<f64>,
     #[serde(default)]
     cached_input_price_per_million: Option<f64>,
+    #[serde(default)]
+    thinking_mode: Option<String>,
+    #[serde(default)]
+    thinking_budget: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -288,6 +296,8 @@ fn linked_from_active(config: &AppConfig) -> LinkedProvider {
         input_price_per_million: config.input_price_per_million,
         output_price_per_million: config.output_price_per_million,
         cached_input_price_per_million: config.cached_input_price_per_million,
+        thinking_mode: config.thinking_mode.clone(),
+        thinking_budget: config.thinking_budget,
     }
 }
 
@@ -313,6 +323,8 @@ fn sync_active_provider(config: &mut AppConfig) {
         config.input_price_per_million = provider.input_price_per_million;
         config.output_price_per_million = provider.output_price_per_million;
         config.cached_input_price_per_million = provider.cached_input_price_per_million;
+        config.thinking_mode = provider.thinking_mode.clone();
+        config.thinking_budget = provider.thinking_budget;
     }
 }
 
@@ -482,6 +494,8 @@ fn connection_config(input: &ProviderConnectionInput) -> AppConfig {
             .collect(),
         request_timeout_secs: input.request_timeout_secs,
         allow_local_network: input.allow_local_network,
+        thinking_mode: None,
+        thinking_budget: None,
     }
 }
 
@@ -1419,7 +1433,73 @@ fn anthropic_messages(messages: &[NativeMessage]) -> Vec<serde_json::Value> {
     out
 }
 
-/// LLM chat isteği — native tool calling (provider'a göre payload)
+fn apply_thinking_params(
+    protocol: providers::ProviderProtocol,
+    provider: &str,
+    config: &AppConfig,
+    payload: &mut serde_json::Value,
+) {
+    let mode = config
+        .thinking_mode
+        .as_deref()
+        .unwrap_or("fast")
+        .trim()
+        .to_ascii_lowercase();
+
+    match protocol {
+        providers::ProviderProtocol::AnthropicMessages => {
+            if matches!(mode.as_str(), "deep" | "balanced" | "high" | "medium") {
+                let budget = config.thinking_budget.unwrap_or(if mode == "deep" || mode == "high" {
+                    8192
+                } else {
+                    2048
+                });
+                payload["thinking"] = serde_json::json!({
+                    "type": "enabled",
+                    "budget_tokens": budget
+                });
+                let max_tokens = payload.get("max_tokens").and_then(|v| v.as_u64()).unwrap_or(8192);
+                if max_tokens <= budget {
+                    payload["max_tokens"] = serde_json::json!(budget + 4096);
+                }
+            } else if mode == "off" || mode == "fast" {
+                payload["thinking"] = serde_json::json!({"type": "disabled"});
+            }
+        }
+        providers::ProviderProtocol::GeminiGenerateContent => {
+            let budget = match mode.as_str() {
+                "deep" | "high" => config.thinking_budget.unwrap_or(8192) as i64,
+                "balanced" | "medium" => config.thinking_budget.unwrap_or(2048) as i64,
+                "off" | "fast" => 0,
+                _ => 0,
+            };
+            if payload.get("generationConfig").is_none() {
+                payload["generationConfig"] = serde_json::json!({});
+            }
+            payload["generationConfig"]["thinkingConfig"] =
+                serde_json::json!({ "thinkingBudget": budget });
+        }
+        providers::ProviderProtocol::OpenAiChat => {
+            let effort = match mode.as_str() {
+                "deep" | "high" => "high",
+                "balanced" | "medium" => "medium",
+                "fast" | "low" => "low",
+                _ => "low",
+            };
+            if mode != "off"
+                && (provider == "openai"
+                    || provider == "openrouter"
+                    || provider == "together"
+                    || provider == "groq"
+                    || provider == "deepseek")
+            {
+                payload["reasoning_effort"] = serde_json::json!(effort);
+            }
+        }
+    }
+}
+
+/// Blocking chat çağrısı — hem chat_completion hem sub-agent kullanır
 fn chat_blocking(config: &AppConfig, messages: &[NativeMessage]) -> Result<ChatResult, String> {
     let provider = config.provider.as_str();
     let protocol = providers::effective_protocol(provider, config.protocol.as_deref());
@@ -1440,7 +1520,7 @@ fn chat_blocking(config: &AppConfig, messages: &[NativeMessage]) -> Result<ChatR
         .cloned()
         .collect();
 
-    let body = match protocol {
+    let mut payload = match protocol {
         providers::ProviderProtocol::AnthropicMessages => serde_json::json!({
             "model": config.model,
             "max_tokens": 8192,
@@ -1451,8 +1531,7 @@ fn chat_blocking(config: &AppConfig, messages: &[NativeMessage]) -> Result<ChatR
                 "input_schema": t["function"]["parameters"]
             })).collect::<Vec<_>>(),
             "messages": anthropic_messages(&non_system)
-        })
-        .to_string(),
+        }),
         providers::ProviderProtocol::GeminiGenerateContent => serde_json::json!({
             "contents": gemini_contents(&non_system),
             "system_instruction": {"parts": [{"text": system_text}]},
@@ -1462,10 +1541,9 @@ fn chat_blocking(config: &AppConfig, messages: &[NativeMessage]) -> Result<ChatR
                 "description": t["function"]["description"],
                 "parameters": t["function"]["parameters"]
             })).collect::<Vec<_>>()}
-        })
-        .to_string(),
+        }),
         providers::ProviderProtocol::OpenAiChat => {
-            let mut payload = serde_json::json!({
+            let mut p = serde_json::json!({
                 "model": config.model,
                 "tools": tools,
                 "tool_choice": "auto",
@@ -1473,14 +1551,16 @@ fn chat_blocking(config: &AppConfig, messages: &[NativeMessage]) -> Result<ChatR
                 "messages": openai_messages(provider, messages)
             });
             if provider == "openai" {
-                payload["max_completion_tokens"] = serde_json::json!(8192);
-                payload["store"] = serde_json::json!(false);
+                p["max_completion_tokens"] = serde_json::json!(8192);
+                p["store"] = serde_json::json!(false);
             } else {
-                payload["max_tokens"] = serde_json::json!(8192);
+                p["max_tokens"] = serde_json::json!(8192);
             }
-            payload.to_string()
+            p
         }
     };
+    apply_thinking_params(protocol, provider, config, &mut payload);
+    let body = payload.to_string();
 
     let build = || {
         providers::chat_request(
@@ -1837,7 +1917,7 @@ fn stream_body(config: &AppConfig, messages: &[NativeMessage]) -> String {
         .filter(|message| message.role != "system")
         .cloned()
         .collect::<Vec<_>>();
-    match protocol {
+    let mut payload = match protocol {
         providers::ProviderProtocol::AnthropicMessages => serde_json::json!({
             "model": config.model,
             "max_tokens": 8192,
@@ -1849,7 +1929,7 @@ fn stream_body(config: &AppConfig, messages: &[NativeMessage]) -> String {
                 "input_schema": tool["function"]["parameters"]
             })).collect::<Vec<_>>(),
             "messages": anthropic_messages(&non_system)
-        }).to_string(),
+        }),
         providers::ProviderProtocol::GeminiGenerateContent => serde_json::json!({
             "contents": gemini_contents(&non_system),
             "system_instruction": {"parts": [{"text": system_text}]},
@@ -1859,9 +1939,9 @@ fn stream_body(config: &AppConfig, messages: &[NativeMessage]) -> String {
                 "description": tool["function"]["description"],
                 "parameters": tool["function"]["parameters"]
             })).collect::<Vec<_>>()}
-        }).to_string(),
+        }),
         providers::ProviderProtocol::OpenAiChat => {
-            let mut payload = serde_json::json!({
+            let mut p = serde_json::json!({
                 "model": config.model,
                 "stream": true,
                 "tools": tools,
@@ -1869,15 +1949,17 @@ fn stream_body(config: &AppConfig, messages: &[NativeMessage]) -> String {
                 "messages": openai_messages(provider, messages)
             });
             if provider == "openai" {
-                payload["max_completion_tokens"] = serde_json::json!(8192);
-                payload["store"] = serde_json::json!(false);
-                payload["stream_options"] = serde_json::json!({"include_usage": true});
+                p["max_completion_tokens"] = serde_json::json!(8192);
+                p["store"] = serde_json::json!(false);
+                p["stream_options"] = serde_json::json!({"include_usage": true});
             } else {
-                payload["max_tokens"] = serde_json::json!(8192);
+                p["max_tokens"] = serde_json::json!(8192);
             }
-            payload.to_string()
+            p
         }
-    }
+    };
+    apply_thinking_params(protocol, provider, config, &mut payload);
+    payload.to_string()
 }
 
 #[tauri::command]
@@ -3507,6 +3589,8 @@ mod security_tests {
                 input_price_per_million: None,
                 output_price_per_million: None,
                 cached_input_price_per_million: None,
+                thinking_mode: None,
+                thinking_budget: None,
             }],
             context_limit: None,
             context_ratio: None,
@@ -3522,6 +3606,8 @@ mod security_tests {
             header_names: vec!["X-Tenant".to_string()],
             request_timeout_secs: Some(45),
             allow_local_network: false,
+            thinking_mode: None,
+            thinking_budget: None,
         }
     }
 
