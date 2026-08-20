@@ -3653,22 +3653,10 @@ mod security_tests {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // `tauri dev` uygulamayi Cargo dizininden (`src-tauri`) baslatir.
-    // Terminalin calisma konumu ise proje koku olmali; aksi halde hem pwd
-    // hem de goreli arac yollari yaniltici bicimde src-tauri'ye baglanir.
+    // If started from project root, point to src-tauri so Tauri config resolves frontendDist "../src"
     if let Ok(current) = std::env::current_dir() {
-        let is_tauri_dir = current
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.eq_ignore_ascii_case("src-tauri"));
-
-        if is_tauri_dir {
-            if let Some(project_root) = current.parent() {
-                if project_root.join("package.json").is_file() && project_root.join("src").is_dir()
-                {
-                    let _ = std::env::set_current_dir(project_root);
-                }
-            }
+        if current.join("src-tauri").is_dir() && current.join("src").is_dir() {
+            let _ = std::env::set_current_dir(current.join("src-tauri"));
         }
     }
 
@@ -3678,6 +3666,31 @@ pub fn run() {
                 .open_js_links_on_click(false)
                 .build(),
         )
+        .setup(|app| {
+            // Restore terminal working directory to project root for tool execution
+            if let Ok(current) = std::env::current_dir() {
+                let is_tauri_dir = current
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.eq_ignore_ascii_case("src-tauri"));
+
+                if is_tauri_dir {
+                    if let Some(project_root) = current.parent() {
+                        if project_root.join("package.json").is_file() && project_root.join("src").is_dir()
+                        {
+                            let _ = std::env::set_current_dir(project_root);
+                        }
+                    }
+                }
+            }
+
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+            Ok(())
+        })
         .manage(streaming::StreamManager::default())
         .invoke_handler(tauri::generate_handler![
             pwd,
