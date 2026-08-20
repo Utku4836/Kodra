@@ -1610,19 +1610,12 @@ body {
 }
 
 .dock-meta-left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  position: relative;
-}
-
-.dock-meta-left {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
-  height: 100%;
+  height: 24px;
+  position: relative;
 }
 
 .dock-meta-left .model-chip {
@@ -1636,8 +1629,8 @@ body {
   text-align: left;
   overflow: hidden;
   cursor: pointer;
-  height: 100%;
-  line-height: 1;
+  height: 24px;
+  line-height: 24px;
 }
 
 .model-name {
@@ -1645,11 +1638,10 @@ body {
   max-width: 240px;
   overflow: hidden;
   color: #686d74;
-  font: 500 13px/1 var(--font-mono);
+  font: 500 13px/24px var(--font-mono);
   letter-spacing: -0.015em;
   text-overflow: ellipsis;
   white-space: nowrap;
-  line-height: 1;
   vertical-align: middle;
   transition: color 0.16s ease;
 }
@@ -1663,9 +1655,10 @@ body {
   align-items: center;
   justify-content: center;
   color: #444951;
-  font: 500 13px/1 var(--font-mono);
+  font: 500 13px/24px var(--font-mono);
   user-select: none;
-  line-height: 1;
+  height: 24px;
+  line-height: 24px;
   vertical-align: middle;
 }
 
@@ -1678,27 +1671,29 @@ body {
   border: 0;
   background: transparent;
   color: #686d74;
-  font: 500 13px/1 var(--font-mono);
+  font: 500 13px/24px var(--font-mono);
   letter-spacing: -0.015em;
   cursor: pointer;
   user-select: none;
-  height: 100%;
-  line-height: 1;
+  height: 24px;
+  line-height: 24px;
   vertical-align: middle;
   transition: color 0.16s ease;
 }
 
 .thinking-label-btn:hover {
-  color: #d0d4da;
+  color: #a2a7af;
 }
 
 .thinking-label-btn.is-open {
-  color: #ffffff;
+  color: #a2a7af;
 }
 
 #thinking-name {
   display: inline-block;
-  line-height: 1;
+  font: 500 13px/24px var(--font-mono);
+  color: inherit;
+  line-height: 24px;
   vertical-align: middle;
 }
 
@@ -1707,7 +1702,7 @@ body {
   position: relative;
   display: inline-flex;
   align-items: center;
-  height: 100%;
+  height: 24px;
   margin-left: 4px;
   padding: 0;
   background: transparent;
@@ -1731,12 +1726,12 @@ body {
   position: relative;
   display: flex;
   align-items: center;
-  height: 20px;
+  height: 24px;
   gap: 0;
   padding: 0 4px 0 8px;
 }
 
-/* One continuous unbroken straight axis line */
+/* One continuous unbroken straight axis line - perfectly aligned with text center */
 .thinking-ruler-axis::before {
   content: "";
   position: absolute;
@@ -1754,7 +1749,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 20px;
+  height: 24px;
   width: 24px;
   cursor: pointer;
   user-select: none;
@@ -1784,40 +1779,13 @@ body {
   background: #ffffff;
 }
 
-/* Subtle floating tooltip on hover/scrub */
-.ruler-tick-tooltip {
-  position: absolute;
-  bottom: 22px;
-  left: 50%;
-  transform: translateX(-50%) translateY(2px);
-  padding: 2px 6px;
-  background: #191b1f;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 4px;
-  font: 500 10.5px/1.2 var(--font-mono);
-  color: #ffffff;
-  white-space: nowrap;
-  pointer-events: none;
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 0.14s ease, transform 0.14s ease, visibility 0.14s ease;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-  z-index: 10;
-}
-
-.ruler-major-col:hover .ruler-tick-tooltip {
-  opacity: 1;
-  visibility: visible;
-  transform: translateX(-50%) translateY(0);
-}
-
 .ruler-minor-group {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: space-evenly;
   width: 22px;
-  height: 20px;
+  height: 24px;
   pointer-events: none;
 }
 

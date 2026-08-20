@@ -1180,6 +1180,19 @@ function currentContextTokens(history = null) {
   return measured > 0 ? measured : estimateTokens(history || effectiveConversationHistory());
 }
 
+const thinkingChip = document.getElementById("thinking-chip");
+const thinkingNameEl = document.getElementById("thinking-name");
+const thinkingInlineBar = document.getElementById("thinking-inline-bar");
+const thinkingInlineTrack = document.getElementById("thinking-inline-track");
+let thinkingModesList = [];
+let thinkingActiveIndex = 0;
+let isThinkingBarOpen = false;
+
+thinkingChip?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  toggleThinkingBar();
+});
+
 function getThinkingModesFor(providerId, modelId) {
   const cachedModel = (modelCache?.items || []).find((m) => m.id === modelId);
 
@@ -1266,25 +1279,18 @@ function renderThinkingInlineTrack() {
     col.className = `ruler-major-col ${idx === thinkingActiveIndex ? "is-selected" : ""}`;
     col.setAttribute("data-mode-id", mode.id);
 
-    // Subtle floating tooltip shown cleanly on hover
-    const tooltip = document.createElement("span");
-    tooltip.className = "ruler-tick-tooltip";
-    tooltip.textContent = mode.label || mode.id;
-
     const mark = document.createElement("div");
     mark.className = "ruler-major-mark";
-
-    col.appendChild(tooltip);
     col.appendChild(mark);
 
-    // Hover previews mode in left chip
+    // Hover previews mode in left chip without any box or popup
     col.addEventListener("mouseenter", () => {
-      if (thinkingName) thinkingName.textContent = mode.label || mode.id;
+      if (thinkingNameEl) thinkingNameEl.textContent = mode.label || mode.id;
     });
 
     col.addEventListener("mouseleave", () => {
       const active = thinkingModesList[thinkingActiveIndex];
-      if (thinkingName && active) thinkingName.textContent = active.label || active.id;
+      if (thinkingNameEl && active) thinkingNameEl.textContent = active.label || active.id;
     });
 
     col.addEventListener("click", (e) => {
