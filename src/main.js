@@ -1184,34 +1184,42 @@ function getThinkingModesFor(providerId, modelId) {
   const provider = String(providerId || "").toLowerCase();
   const model = String(modelId || "").toLowerCase();
 
+  // Find model metadata from cache if available
+  const cachedModel = (modelCache?.items || []).find((m) => m.id === modelId);
+  const isReasoning = cachedModel?.supportsReasoning ?? (
+    model.includes("claude-3-7") || model.includes("claude-3.7") ||
+    model.includes("thinking") || model.includes("2.5") ||
+    model.includes("o1") || model.includes("o3") || model.includes("gpt-5") ||
+    model.includes("r1") || model.includes("reasoner") || model.includes("qwq")
+  );
+
+  // If model is standard non-reasoning, return single direct stop
+  if (!isReasoning) {
+    return [{ id: "off", label: "standard", budget: 0 }];
+  }
+
   // 1. Anthropic / Claude
   if (provider === "anthropic" || model.includes("claude-3-7") || model.includes("claude-3.7")) {
     return [
       { id: "off", label: "off", budget: 0 },
-      { id: "2k", label: "2k", budget: 2048 },
+      { id: "1k", label: "1k", budget: 1024 },
       { id: "4k", label: "4k", budget: 4096 },
-      { id: "8k", label: "8k", budget: 8192 },
       { id: "16k", label: "16k", budget: 16384 },
-      { id: "32k", label: "32k", budget: 32768 },
+      { id: "64k", label: "64k", budget: 64000 },
     ];
   }
 
-  // 2. Google Gemini
+  // 2. Google Gemini Thinking
   if (provider === "gemini" || model.includes("gemini")) {
     if (model.includes("thinking") || model.includes("2.5") || model.includes("flash-thinking")) {
       return [
         { id: "off", label: "off", budget: 0 },
         { id: "2k", label: "2k", budget: 2048 },
         { id: "8k", label: "8k", budget: 8192 },
-        { id: "16k", label: "16k", budget: 16384 },
         { id: "32k", label: "32k", budget: 32768 },
       ];
     }
-    return [
-      { id: "off", label: "off", budget: 0 },
-      { id: "balanced", label: "balanced", budget: 2048 },
-      { id: "deep", label: "deep", budget: 8192 },
-    ];
+    return [{ id: "off", label: "standard", budget: 0 }];
   }
 
   // 3. OpenAI Reasoning Models (o1, o3, o3-mini, gpt-5, etc.)
@@ -1225,14 +1233,14 @@ function getThinkingModesFor(providerId, modelId) {
 
   // 4. DeepSeek
   if (provider === "deepseek" || model.includes("deepseek") || model.includes("r1")) {
-    return [
-      { id: "chat", label: "chat" },
-      { id: "reasoner", label: "reasoner" },
-    ];
+    if (model.includes("reasoner") || model.includes("r1")) {
+      return [{ id: "reasoner", label: "reasoner" }];
+    }
+    return [{ id: "chat", label: "chat" }];
   }
 
-  // 5. OpenRouter / Groq / Together / Ollama (if reasoning model detected)
-  if (model.includes("r1") || model.includes("reasoner") || model.includes("thinking")) {
+  // 5. OpenRouter / Groq / Together / Ollama (reasoning models)
+  if (model.includes("r1") || model.includes("reasoner") || model.includes("thinking") || model.includes("qwq")) {
     return [
       { id: "low", label: "low" },
       { id: "medium", label: "medium" },
@@ -1240,12 +1248,7 @@ function getThinkingModesFor(providerId, modelId) {
     ];
   }
 
-  // Standard fallback
-  return [
-    { id: "direct", label: "direct" },
-    { id: "balanced", label: "balanced" },
-    { id: "deep", label: "deep" },
-  ];
+  return [{ id: "off", label: "standard", budget: 0 }];
 }
 
 function updateThinkingChip(modeId = null) {
@@ -1259,7 +1262,7 @@ function updateThinkingChip(modeId = null) {
   thinkingActiveIndex = currentIdx >= 0 ? currentIdx : 0;
   const activeMode = thinkingModesList[thinkingActiveIndex] || thinkingModesList[0];
 
-  thinkingNameEl.textContent = activeMode?.label || activeMode?.id || "fast";
+  thinkingNameEl.textContent = activeMode?.label || activeMode?.id || "standard";
   if (thinkingChip) {
     thinkingChip.title = `Thinking: ${activeMode?.label || activeMode?.id} (Click to change)`;
   }
@@ -1316,12 +1319,6 @@ function renderThinkingInlineTrack() {
     const mark = document.createElement("div");
     mark.className = "ruler-major-mark";
 
-    if (idx === thinkingActiveIndex) {
-      const pin = document.createElement("div");
-      pin.className = "ruler-needle-pin";
-      mark.appendChild(pin);
-    }
-
     col.appendChild(label);
     col.appendChild(mark);
 
@@ -1334,7 +1331,7 @@ function renderThinkingInlineTrack() {
 
     thinkingInlineTrack.appendChild(col);
 
-    // 2. Minor Ticks between major ticks
+    // 2. Minor Ticks between major ticks (evenly distributed)
     if (idx < count - 1) {
       const minorGrp = document.createElement("div");
       minorGrp.className = "ruler-minor-group";

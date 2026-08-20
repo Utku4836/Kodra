@@ -1677,24 +1677,36 @@ body {
 
 /* ===== MINIMAL RULER / NUMBER LINE SCRUBBER ===== */
 .thinking-ruler-wrap {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  margin-left: 10px;
-  padding: 0 4px;
+  padding: 0 0 0 10px;
   background: transparent;
   border: 0;
-  animation: ruler-slide-in 0.16s cubic-bezier(0.16, 1, 0.3, 1) both;
+  transform-origin: left bottom;
+  animation: ruler-extend 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-@keyframes ruler-slide-in {
+@keyframes ruler-extend {
   from {
     opacity: 0;
-    transform: translateX(-8px);
+    transform: scaleX(0.2);
   }
   to {
     opacity: 1;
-    transform: translateX(0);
+    transform: scaleX(1);
   }
+}
+
+.thinking-ruler-wrap::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 6px;
+  width: 10px;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.18);
+  pointer-events: none;
 }
 
 .thinking-ruler-axis {
@@ -1710,9 +1722,9 @@ body {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 5px;
+  bottom: 4px;
   height: 1px;
-  background: rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.18);
   pointer-events: none;
 }
 
@@ -1722,7 +1734,7 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: flex-end;
-  min-width: 36px;
+  min-width: 42px;
   cursor: pointer;
   user-select: none;
   padding: 0 4px;
@@ -1730,17 +1742,16 @@ body {
 }
 
 .ruler-tick-label {
-  font: 550 10.5px/1 var(--font-mono);
-  color: #686e76;
-  margin-bottom: 5px;
+  font: 500 10.5px/1 var(--font-mono);
+  color: #5d636b;
+  margin-bottom: 6px;
   letter-spacing: -0.01em;
   white-space: nowrap;
-  transition: color 0.14s ease, transform 0.14s ease;
+  transition: color 0.14s ease;
 }
 
 .ruler-major-col:hover .ruler-tick-label {
-  color: #c4c9d0;
-  transform: translateY(-1px);
+  color: #b8bdc4;
 }
 
 .ruler-major-col.is-selected .ruler-tick-label {
@@ -1751,52 +1762,34 @@ body {
 .ruler-major-mark {
   position: relative;
   width: 1.5px;
-  height: 11px;
-  background: rgba(255, 255, 255, 0.4);
+  height: 10px;
+  background: rgba(255, 255, 255, 0.32);
   border-radius: 1px;
-  transition: background-color 0.14s ease, box-shadow 0.14s ease;
+  transition: background-color 0.14s ease, height 0.14s ease;
 }
 
 .ruler-major-col:hover .ruler-major-mark {
-  background: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.65);
 }
 
 .ruler-major-col.is-selected .ruler-major-mark {
+  height: 12px;
   background: #ffffff;
-  box-shadow: 0 0 6px rgba(255, 255, 255, 0.85);
-}
-
-.ruler-needle-pin {
-  position: absolute;
-  top: -3px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #ffffff;
-  box-shadow: 0 0 8px rgba(255, 255, 255, 0.95);
-  animation: needle-pop 0.14s ease-out;
-}
-
-@keyframes needle-pop {
-  from { transform: translateX(-50%) scale(0.5); opacity: 0; }
-  to { transform: translateX(-50%) scale(1); opacity: 1; }
 }
 
 .ruler-minor-group {
   display: flex;
   align-items: center;
   justify-content: space-evenly;
-  width: 22px;
-  height: 11px;
+  width: 26px;
+  height: 10px;
   pointer-events: none;
 }
 
 .ruler-minor-tick {
   width: 1px;
-  height: 5px;
-  background: rgba(255, 255, 255, 0.16);
+  height: 4.5px;
+  background: rgba(255, 255, 255, 0.12);
   border-radius: 0.5px;
 }
 
