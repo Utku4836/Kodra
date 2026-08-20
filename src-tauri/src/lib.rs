@@ -384,6 +384,46 @@ fn migrate_config_secrets(config: &mut AppConfig) -> Result<bool, String> {
     Ok(changed)
 }
 
+fn validate_and_clean_config(config: &mut AppConfig) -> bool {
+    let mut changed = false;
+    config.providers.retain(|p| {
+        let auth = p.auth_scheme.as_deref().unwrap_or("bearer");
+        if auth == "none" && p.header_names.is_empty() {
+            return true;
+        }
+        if let Some(secret_ref) = &p.secret_ref {
+            if secrets::exists(secret_ref) {
+                return true;
+            }
+        }
+        changed = true;
+        false
+    });
+    if !config.provider.is_empty() {
+        let auth = config.auth_scheme.as_deref().unwrap_or("bearer");
+        let is_none_auth = auth == "none" && config.header_names.is_empty();
+        if !is_none_auth {
+            let has_secret = config
+                .secret_ref
+                .as_ref()
+                .map(|r| secrets::exists(r))
+                .unwrap_or(false);
+            if !has_secret {
+                config.provider.clear();
+                config.model.clear();
+                config.secret_ref = None;
+                changed = true;
+            }
+        }
+    }
+    if config.provider.is_empty() && !config.providers.is_empty() {
+        config.provider = config.providers[0].id.clone();
+        sync_active_provider(config);
+        changed = true;
+    }
+    changed
+}
+
 fn read_stored_config(app: &tauri::AppHandle) -> Result<Option<AppConfig>, String> {
     let path = config_path(app)?;
     if !path.exists() {
@@ -391,8 +431,15 @@ fn read_stored_config(app: &tauri::AppHandle) -> Result<Option<AppConfig>, Strin
     }
     let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let mut config: AppConfig = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
-    if migrate_config_secrets(&mut config)? {
+    let mut changed = migrate_config_secrets(&mut config)?;
+    if validate_and_clean_config(&mut config) {
+        changed = true;
+    }
+    if changed {
         write_sanitized_config(&path, &config)?;
+    }
+    if config.provider.is_empty() && config.providers.is_empty() {
+        return Ok(None);
     }
     Ok(Some(config))
 }

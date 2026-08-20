@@ -1932,24 +1932,6 @@ if (modalSearchInput) {
 }
 
 async function getModels(force = false, refreshBackend = force) {
-  if (!connectionOnline) {
-    setConnectionOnline(false);
-    return modelCache?.items || [];
-  }
-  const cacheState = modelCacheState(modelCache);
-  if (!force && cacheState === "fresh") return modelCache.items;
-  if (!force && cacheState === "stale") {
-    if (!modelFetchPromise) {
-      modelFetchPromise = getModels(true, true).finally(() => { modelFetchPromise = null; });
-    }
-    return modelCache.items;
-  }
-  const fallbackItems = modelCache?.items || [];
-  if (!force && modelFetchPromise) return modelFetchPromise;
-  if (!force) {
-    modelFetchPromise = getModels(true, false).finally(() => { modelFetchPromise = null; });
-    return modelFetchPromise;
-  }
   let config;
   try {
     config = configCache || (await invoke("get_config"));
@@ -1957,16 +1939,45 @@ async function getModels(force = false, refreshBackend = force) {
     logLine("Could not read config: " + e, "err");
     return [];
   }
-  if (!config) return [];
+  if (!config) {
+    modelCache = null;
+    try { localStorage.removeItem(PUBLIC_MODEL_CACHE_KEY); } catch (_) {}
+    return [];
+  }
 
-  const allProviders = config.providers && config.providers.length > 0 ? config.providers : [config];
+  const allProviders = config.providers && config.providers.length > 0 ? config.providers : (config.provider ? [config] : []);
   const providers = allProviders.filter((p) => {
     const pMeta = PROVIDER_REGISTRY[p.id || p.provider];
     return hasProviderCredential(p, pMeta);
   });
 
   if (providers.length === 0) {
+    modelCache = null;
+    try { localStorage.removeItem(PUBLIC_MODEL_CACHE_KEY); } catch (_) {}
     return [];
+  }
+
+  const connectedIds = new Set(providers.map((p) => p.id || p.provider));
+
+  if (!connectionOnline) {
+    setConnectionOnline(false);
+    return (modelCache?.items || []).filter((m) => connectedIds.has(m.providerId));
+  }
+
+  const cacheState = modelCacheState(modelCache);
+  const cachedConnected = (modelCache?.items || []).filter((m) => connectedIds.has(m.providerId));
+  if (!force && cacheState === "fresh" && cachedConnected.length > 0) return cachedConnected;
+  if (!force && cacheState === "stale" && cachedConnected.length > 0) {
+    if (!modelFetchPromise) {
+      modelFetchPromise = getModels(true, true).finally(() => { modelFetchPromise = null; });
+    }
+    return cachedConnected;
+  }
+  const fallbackItems = cachedConnected;
+  if (!force && modelFetchPromise) return modelFetchPromise;
+  if (!force) {
+    modelFetchPromise = getModels(true, false).finally(() => { modelFetchPromise = null; });
+    return modelFetchPromise;
   }
 
   const failures = [];
@@ -3945,28 +3956,22 @@ async function init() {
         updatePath("~");
       }
     } else {
-      const cachedProvider = configCache ? PROVIDER_REGISTRY[configCache.provider] : null;
-      if (configCache && hasProviderCredential(configCache, cachedProvider)) {
-        isInitialized = true;
-        updateModelChip(configCache.model);
-        const p = PROVIDER_REGISTRY[configCache.provider];
-        if (p) providerNameCache = p.name;
-      } else {
-        modalAllItems = Object.values(PROVIDER_REGISTRY).map((p) => ({ id: p.id, name: p.name, provider: p }));
-        openModal("providers");
-      }
-    }
-  } catch (e) {
-    const cachedProvider = configCache ? PROVIDER_REGISTRY[configCache.provider] : null;
-    if (configCache && hasProviderCredential(configCache, cachedProvider)) {
-      isInitialized = true;
-      updateModelChip(configCache.model);
-      const p = PROVIDER_REGISTRY[configCache.provider];
-      if (p) providerNameCache = p.name;
-    } else {
+      configCache = null;
+      modelCache = null;
+      try { localStorage.removeItem("appConfig"); } catch (e) {}
+      try { localStorage.removeItem(PUBLIC_MODEL_CACHE_KEY); } catch (e) {}
+      isInitialized = false;
       modalAllItems = Object.values(PROVIDER_REGISTRY).map((p) => ({ id: p.id, name: p.name, provider: p }));
       openModal("providers");
     }
+  } catch (e) {
+    configCache = null;
+    modelCache = null;
+    try { localStorage.removeItem("appConfig"); } catch (_) {}
+    try { localStorage.removeItem(PUBLIC_MODEL_CACHE_KEY); } catch (_) {}
+    isInitialized = false;
+    modalAllItems = Object.values(PROVIDER_REGISTRY).map((p) => ({ id: p.id, name: p.name, provider: p }));
+    openModal("providers");
   }
   if (isInitialized) {
     try {
