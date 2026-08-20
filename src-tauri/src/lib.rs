@@ -1182,20 +1182,19 @@ fn redact_sensitive(input: &str) -> String {
     output
 }
 
-fn retry_after_from_error_response(response: ureq::Response) -> Option<String> {
+fn parse_error_response(response: ureq::Response) -> (Option<String>, Option<String>) {
     let header = response
         .header("retry-after")
         .or_else(|| response.header("x-ratelimit-reset"))
         .map(str::to_string);
-    if header.is_some() {
-        return header;
-    }
+    let body: Option<serde_json::Value> = response.into_json().ok();
 
-    let body: serde_json::Value = response.into_json().ok()?;
-    body.pointer("/error/details")
-        .and_then(serde_json::Value::as_array)
-        .and_then(|details| {
-            details.iter().find_map(|detail| {
+    let retry_delay = header.or_else(|| {
+        let b = body.as_ref()?;
+        b.pointer("/error/details")
+            .and_then(serde_json::Value::as_array)?
+            .iter()
+            .find_map(|detail| {
                 let kind = detail
                     .get("@type")
                     .and_then(serde_json::Value::as_str)
@@ -1209,7 +1208,18 @@ fn retry_after_from_error_response(response: ureq::Response) -> Option<String> {
                     })
                     .flatten()
             })
-        })
+    });
+
+    let message = body.and_then(|b| {
+        b.pointer("/error/message")
+            .or_else(|| b.pointer("/message"))
+            .or_else(|| b.pointer("/error"))
+            .and_then(serde_json::Value::as_str)
+            .map(|s| redact_sensitive(s).trim().to_string())
+            .filter(|s| !s.is_empty())
+    });
+
+    (retry_delay, message)
 }
 
 fn safe_retry_hint(value: Option<String>) -> Option<String> {
@@ -1225,14 +1235,11 @@ fn safe_retry_hint(value: Option<String>) -> Option<String> {
 fn map_ureq_err(e: ureq::Error) -> String {
     match e {
         ureq::Error::Status(code, resp) => {
-            // Provider hata gövdesi secret veya custom header değeri yansıtabilir;
-            // kullanıcıya yalnızca güvenli, eyleme dönük sınıflandırma döndürülür.
-            let retry_after = if matches!(code, 429 | 503) {
-                safe_retry_hint(retry_after_from_error_response(resp))
-            } else {
-                drop(resp);
-                None
-            };
+            let (retry_after_raw, error_msg) = parse_error_response(resp);
+            let retry_after = safe_retry_hint(retry_after_raw);
+            if let Some(msg) = error_msg {
+                return msg;
+            }
             match code {
                 400 => {
                     "Invalid request (400) — check the model, endpoint, or protocol settings"
@@ -1241,9 +1248,9 @@ fn map_ureq_err(e: ureq::Error) -> String {
                 402 => "Insufficient credit (402) — check the provider balance or spending limit"
                     .to_string(),
                 429 => retry_after
-                    .map(|delay| format!("Rate limit (429) — {delay} sonra tekrar deneyin"))
+                    .map(|delay| format!("Rate limit (429) — try again after {delay}"))
                     .unwrap_or_else(|| {
-                        "Rate limit (429) — limit penceresi yenilenince tekrar deneyin".to_string()
+                        "Rate limit (429) — wait for the quota window to refresh".to_string()
                     }),
                 503 => retry_after
                     .map(|delay| format!("Server overloaded (503) — try again after {delay}"))
@@ -1567,10 +1574,11 @@ fn chat_blocking(config: &AppConfig, messages: &[NativeMessage]) -> Result<ChatR
         .cloned()
         .collect();
 
+    let max_out = config.max_output_tokens.unwrap_or(4096).clamp(256, 16384);
     let mut payload = match protocol {
         providers::ProviderProtocol::AnthropicMessages => serde_json::json!({
             "model": config.model,
-            "max_tokens": 8192,
+            "max_tokens": max_out,
             "system": system_text,
             "tools": tools.as_array().unwrap_or(&Vec::new()).iter().map(|t| serde_json::json!({
                 "name": t["function"]["name"],
@@ -1582,7 +1590,7 @@ fn chat_blocking(config: &AppConfig, messages: &[NativeMessage]) -> Result<ChatR
         providers::ProviderProtocol::GeminiGenerateContent => serde_json::json!({
             "contents": gemini_contents(&non_system),
             "system_instruction": {"parts": [{"text": system_text}]},
-            "generationConfig": {"maxOutputTokens": 8192},
+            "generationConfig": {"maxOutputTokens": max_out},
             "tools": {"functionDeclarations": tools.as_array().unwrap_or(&Vec::new()).iter().map(|t| serde_json::json!({
                 "name": t["function"]["name"],
                 "description": t["function"]["description"],
@@ -1598,10 +1606,10 @@ fn chat_blocking(config: &AppConfig, messages: &[NativeMessage]) -> Result<ChatR
                 "messages": openai_messages(provider, messages)
             });
             if provider == "openai" {
-                p["max_completion_tokens"] = serde_json::json!(8192);
+                p["max_completion_tokens"] = serde_json::json!(max_out);
                 p["store"] = serde_json::json!(false);
             } else {
-                p["max_tokens"] = serde_json::json!(8192);
+                p["max_tokens"] = serde_json::json!(max_out);
             }
             p
         }
@@ -1964,10 +1972,11 @@ fn stream_body(config: &AppConfig, messages: &[NativeMessage]) -> String {
         .filter(|message| message.role != "system")
         .cloned()
         .collect::<Vec<_>>();
+    let max_out = config.max_output_tokens.unwrap_or(4096).clamp(256, 16384);
     let mut payload = match protocol {
         providers::ProviderProtocol::AnthropicMessages => serde_json::json!({
             "model": config.model,
-            "max_tokens": 8192,
+            "max_tokens": max_out,
             "stream": true,
             "system": system_text,
             "tools": tools.as_array().unwrap_or(&Vec::new()).iter().map(|tool| serde_json::json!({
@@ -1980,7 +1989,7 @@ fn stream_body(config: &AppConfig, messages: &[NativeMessage]) -> String {
         providers::ProviderProtocol::GeminiGenerateContent => serde_json::json!({
             "contents": gemini_contents(&non_system),
             "system_instruction": {"parts": [{"text": system_text}]},
-            "generationConfig": {"maxOutputTokens": 8192},
+            "generationConfig": {"maxOutputTokens": max_out},
             "tools": {"functionDeclarations": tools.as_array().unwrap_or(&Vec::new()).iter().map(|tool| serde_json::json!({
                 "name": tool["function"]["name"],
                 "description": tool["function"]["description"],
@@ -1996,11 +2005,11 @@ fn stream_body(config: &AppConfig, messages: &[NativeMessage]) -> String {
                 "messages": openai_messages(provider, messages)
             });
             if provider == "openai" {
-                p["max_completion_tokens"] = serde_json::json!(8192);
+                p["max_completion_tokens"] = serde_json::json!(max_out);
                 p["store"] = serde_json::json!(false);
                 p["stream_options"] = serde_json::json!({"include_usage": true});
             } else {
-                p["max_tokens"] = serde_json::json!(8192);
+                p["max_tokens"] = serde_json::json!(max_out);
             }
             p
         }
