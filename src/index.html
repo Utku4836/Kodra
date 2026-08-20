@@ -30,21 +30,8 @@
         <div id="log" class="log"></div>
       </main>
 
-      <!-- BOTTOM BAR — komut input -->
+      <!-- BOTTOM BAR — komut input & dock meta -->
       <footer class="bottom-bar">
-        <!-- FLOATING AI WORKING CAPSULE — zarif, modern ve minimal durdurma kapsülü -->
-        <div class="ai-working-capsule" id="stream-actions" hidden>
-          <button class="stream-stop" id="stream-stop" type="button" title="Stop response (Esc)" aria-label="Stop response">
-            <div class="ai-wave-indicator" aria-hidden="true">
-              <span class="ai-wave-bar"></span>
-              <span class="ai-wave-bar"></span>
-              <span class="ai-wave-bar"></span>
-            </div>
-            <span class="stream-stop-label" id="stream-stop-label">working</span>
-            <kbd class="ai-esc-kbd">esc</kbd>
-          </button>
-        </div>
-
         <div class="command-area">
           <div class="command-dock">
             <div class="command-input-wrap">
@@ -61,22 +48,35 @@
             </div>
           </div>
           <div class="dock-meta">
-            <div class="dock-chips">
+            <div class="dock-meta-left">
               <button class="model-chip" id="model-chip" title="Select model">
                 <span class="model-name" id="model-name">model</span>
               </button>
-              <button class="thinking-chip" id="thinking-chip" title="Thinking mode (Click to change)" type="button">
-                <span class="thinking-icon" id="thinking-icon">⚡</span>
-                <span class="thinking-name" id="thinking-name">Fast</span>
+              <span class="dock-sep" id="dock-sep" aria-hidden="true">·</span>
+              <button class="thinking-label-btn" id="thinking-chip" title="Thinking mode (Click to scrub)" type="button">
+                <span class="thinking-name" id="thinking-name">fast</span>
               </button>
+              <!-- INLINE EXPANDING THINKING BAR -->
+              <div class="thinking-inline-bar" id="thinking-inline-bar" style="display: none;">
+                <div class="thinking-inline-track" id="thinking-inline-track"></div>
+              </div>
             </div>
-            <div class="ctx-status" id="ctx-status" data-state="ready" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" title="Context usage">
-              <svg class="ctx-gauge-svg" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-                <circle class="ctx-gauge-track" cx="12" cy="12" r="8.5" />
-                <circle class="ctx-gauge-fill" id="ctx-gauge-fill" cx="12" cy="12" r="8.5" />
-              </svg>
-              <span class="ctx-ring" id="ctx-fill" aria-hidden="true" style="display:none;"></span>
-              <span class="ctx-pct" id="ctx-pct">0%</span>
+            <div class="dock-meta-right">
+              <!-- AI WORKING / STOP INDICATOR — Context'in hemen solunda, sade ve kutusuz -->
+              <button class="stream-inline-btn" id="stream-actions" type="button" title="Stop response (Esc)" aria-label="Stop response" hidden>
+                <span class="stream-stop-dot" aria-hidden="true"></span>
+                <span class="stream-stop-label" id="stream-stop-label">working</span>
+                <kbd class="stream-stop-esc">esc</kbd>
+              </button>
+              <!-- CONTEXT GAUGE -->
+              <div class="ctx-status" id="ctx-status" data-state="ready" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" title="Context usage">
+                <svg class="ctx-gauge-svg" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                  <circle class="ctx-gauge-track" cx="12" cy="12" r="8.5" />
+                  <circle class="ctx-gauge-fill" id="ctx-gauge-fill" cx="12" cy="12" r="8.5" />
+                </svg>
+                <span class="ctx-ring" id="ctx-fill" aria-hidden="true" style="display:none;"></span>
+                <span class="ctx-pct" id="ctx-pct">0%</span>
+              </div>
             </div>
           </div>
         </div>
@@ -84,24 +84,6 @@
 
       <!-- SUGGEST PANEL — komut önerileri -->
       <div class="suggest-panel" id="suggest-panel" style="display: none;"></div>
-
-      <!-- THINKING MODE MODAL — dinamik düşünce modu seçimi -->
-      <div class="modal thinking-modal" id="thinking-modal" role="dialog" aria-modal="true" aria-label="Thinking mode selector" style="display: none;">
-        <div class="modal-window thinking-window">
-          <header class="thinking-header">
-            <div class="thinking-title-wrap">
-              <span class="thinking-provider-tag" id="thinking-provider-tag">Reasoning Engine</span>
-              <h2 id="thinking-modal-title">Thinking Mode</h2>
-            </div>
-            <button class="status-close" id="thinking-close" type="button" aria-label="Close thinking mode">×</button>
-          </header>
-          <div class="thinking-slider-track" id="thinking-slider-track"></div>
-          <div class="thinking-options-list" id="thinking-options-list"></div>
-          <footer class="thinking-hint">
-            [← / →] scrub mode · [Enter] apply · [Esc] close
-          </footer>
-        </div>
-      </div>
 
       <!-- MODAL — model/provider/mod seçimi -->
       <div class="modal" id="modal" role="dialog" aria-modal="true" aria-label="Selection menu" style="display: none;">

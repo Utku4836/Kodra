@@ -1,4 +1,4 @@
-﻿import assert from "node:assert/strict";
+import assert from "node:assert/strict";
 import test from "node:test";
 import { JSDOM } from "jsdom";
 import fs from "node:fs";
@@ -7,24 +7,25 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-test("index.html contains the new floating working capsule, thinking chip, and SVG context gauge", () => {
+test("index.html contains minimal inline thinking bar, stream actions next to context gauge, and SVG context gauge", () => {
   const html = fs.readFileSync(path.join(__dirname, "../src/index.html"), "utf8");
   const dom = new JSDOM(html);
   const doc = dom.window.document;
 
-  // 1. Floating AI capsule
-  const workingCapsule = doc.getElementById("stream-actions");
-  assert.ok(workingCapsule, "stream-actions capsule exists");
-  assert.ok(workingCapsule.classList.contains("ai-working-capsule"), "capsule has ai-working-capsule class");
-  assert.ok(doc.getElementById("stream-stop"), "stream-stop button exists");
-  assert.ok(doc.querySelector(".ai-wave-indicator"), "ai-wave-indicator exists");
+  // 1. Inline stream actions next to context gauge
+  const streamActions = doc.getElementById("stream-actions");
+  assert.ok(streamActions, "stream-actions exists");
+  assert.ok(streamActions.classList.contains("stream-inline-btn"), "has stream-inline-btn class");
+  assert.ok(doc.querySelector(".stream-stop-dot"), "stream-stop-dot exists");
+  assert.ok(doc.getElementById("stream-stop-label"), "stream-stop-label exists");
 
-  // 2. Thinking chip & modal
+  // 2. Inline Thinking label & scrubber bar
   const thinkingChip = doc.getElementById("thinking-chip");
   assert.ok(thinkingChip, "thinking-chip button exists");
+  assert.ok(doc.getElementById("dock-sep"), "dock-sep dot exists");
   assert.ok(doc.getElementById("thinking-name"), "thinking-name exists");
-  assert.ok(doc.getElementById("thinking-modal"), "thinking-modal exists");
-  assert.ok(doc.getElementById("thinking-slider-track"), "thinking-slider-track exists");
+  assert.ok(doc.getElementById("thinking-inline-bar"), "thinking-inline-bar exists");
+  assert.ok(doc.getElementById("thinking-inline-track"), "thinking-inline-track exists");
 
   // 3. SVG context gauge
   const ctxStatus = doc.getElementById("ctx-status");
