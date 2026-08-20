@@ -1180,19 +1180,6 @@ function currentContextTokens(history = null) {
   return measured > 0 ? measured : estimateTokens(history || effectiveConversationHistory());
 }
 
-const thinkingChip = document.getElementById("thinking-chip");
-const thinkingNameEl = document.getElementById("thinking-name");
-const thinkingInlineBar = document.getElementById("thinking-inline-bar");
-const thinkingInlineTrack = document.getElementById("thinking-inline-track");
-let thinkingModesList = [];
-let thinkingActiveIndex = 0;
-let isThinkingBarOpen = false;
-
-thinkingChip?.addEventListener("click", (e) => {
-  e.stopPropagation();
-  toggleThinkingBar();
-});
-
 function getThinkingModesFor(providerId, modelId) {
   const cachedModel = (modelCache?.items || []).find((m) => m.id === modelId);
 
