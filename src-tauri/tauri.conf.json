@@ -19,6 +19,9 @@
         "decorations": false,
         "transparent": true,
         "shadow": true,
+        "center": true,
+        "focus": true,
+        "visible": true,
         "devtools": false
       }
     ],

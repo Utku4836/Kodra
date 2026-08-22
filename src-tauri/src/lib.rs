@@ -96,6 +96,10 @@ struct AppConfig {
     request_timeout_secs: Option<u64>,
     #[serde(default)]
     allow_local_network: bool,
+    #[serde(default)]
+    thinking_mode: Option<String>,
+    #[serde(default)]
+    thinking_budget: Option<u64>,
 }
 
 fn model_cache_key(config: &AppConfig) -> ModelCacheKey {
@@ -184,6 +188,10 @@ struct LinkedProvider {
     output_price_per_million: Option<f64>,
     #[serde(default)]
     cached_input_price_per_million: Option<f64>,
+    #[serde(default)]
+    thinking_mode: Option<String>,
+    #[serde(default)]
+    thinking_budget: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -288,6 +296,8 @@ fn linked_from_active(config: &AppConfig) -> LinkedProvider {
         input_price_per_million: config.input_price_per_million,
         output_price_per_million: config.output_price_per_million,
         cached_input_price_per_million: config.cached_input_price_per_million,
+        thinking_mode: config.thinking_mode.clone(),
+        thinking_budget: config.thinking_budget,
     }
 }
 
@@ -313,6 +323,8 @@ fn sync_active_provider(config: &mut AppConfig) {
         config.input_price_per_million = provider.input_price_per_million;
         config.output_price_per_million = provider.output_price_per_million;
         config.cached_input_price_per_million = provider.cached_input_price_per_million;
+        config.thinking_mode = provider.thinking_mode.clone();
+        config.thinking_budget = provider.thinking_budget;
     }
 }
 
@@ -372,6 +384,46 @@ fn migrate_config_secrets(config: &mut AppConfig) -> Result<bool, String> {
     Ok(changed)
 }
 
+fn validate_and_clean_config(config: &mut AppConfig) -> bool {
+    let mut changed = false;
+    config.providers.retain(|p| {
+        let auth = p.auth_scheme.as_deref().unwrap_or("bearer");
+        if auth == "none" && p.header_names.is_empty() {
+            return true;
+        }
+        if let Some(secret_ref) = &p.secret_ref {
+            if secrets::exists(secret_ref) {
+                return true;
+            }
+        }
+        changed = true;
+        false
+    });
+    if !config.provider.is_empty() {
+        let auth = config.auth_scheme.as_deref().unwrap_or("bearer");
+        let is_none_auth = auth == "none" && config.header_names.is_empty();
+        if !is_none_auth {
+            let has_secret = config
+                .secret_ref
+                .as_ref()
+                .map(|r| secrets::exists(r))
+                .unwrap_or(false);
+            if !has_secret {
+                config.provider.clear();
+                config.model.clear();
+                config.secret_ref = None;
+                changed = true;
+            }
+        }
+    }
+    if config.provider.is_empty() && !config.providers.is_empty() {
+        config.provider = config.providers[0].id.clone();
+        sync_active_provider(config);
+        changed = true;
+    }
+    changed
+}
+
 fn read_stored_config(app: &tauri::AppHandle) -> Result<Option<AppConfig>, String> {
     let path = config_path(app)?;
     if !path.exists() {
@@ -379,8 +431,15 @@ fn read_stored_config(app: &tauri::AppHandle) -> Result<Option<AppConfig>, Strin
     }
     let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let mut config: AppConfig = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
-    if migrate_config_secrets(&mut config)? {
+    let mut changed = migrate_config_secrets(&mut config)?;
+    if validate_and_clean_config(&mut config) {
+        changed = true;
+    }
+    if changed {
         write_sanitized_config(&path, &config)?;
+    }
+    if config.provider.is_empty() && config.providers.is_empty() {
+        return Ok(None);
     }
     Ok(Some(config))
 }
@@ -482,6 +541,8 @@ fn connection_config(input: &ProviderConnectionInput) -> AppConfig {
             .collect(),
         request_timeout_secs: input.request_timeout_secs,
         allow_local_network: input.allow_local_network,
+        thinking_mode: None,
+        thinking_budget: None,
     }
 }
 
@@ -1121,20 +1182,19 @@ fn redact_sensitive(input: &str) -> String {
     output
 }
 
-fn retry_after_from_error_response(response: ureq::Response) -> Option<String> {
+fn parse_error_response(response: ureq::Response) -> (Option<String>, Option<String>) {
     let header = response
         .header("retry-after")
         .or_else(|| response.header("x-ratelimit-reset"))
         .map(str::to_string);
-    if header.is_some() {
-        return header;
-    }
+    let body: Option<serde_json::Value> = response.into_json().ok();
 
-    let body: serde_json::Value = response.into_json().ok()?;
-    body.pointer("/error/details")
-        .and_then(serde_json::Value::as_array)
-        .and_then(|details| {
-            details.iter().find_map(|detail| {
+    let retry_delay = header.or_else(|| {
+        let b = body.as_ref()?;
+        b.pointer("/error/details")
+            .and_then(serde_json::Value::as_array)?
+            .iter()
+            .find_map(|detail| {
                 let kind = detail
                     .get("@type")
                     .and_then(serde_json::Value::as_str)
@@ -1148,7 +1208,18 @@ fn retry_after_from_error_response(response: ureq::Response) -> Option<String> {
                     })
                     .flatten()
             })
-        })
+    });
+
+    let message = body.and_then(|b| {
+        b.pointer("/error/message")
+            .or_else(|| b.pointer("/message"))
+            .or_else(|| b.pointer("/error"))
+            .and_then(serde_json::Value::as_str)
+            .map(|s| redact_sensitive(s).trim().to_string())
+            .filter(|s| !s.is_empty())
+    });
+
+    (retry_delay, message)
 }
 
 fn safe_retry_hint(value: Option<String>) -> Option<String> {
@@ -1164,14 +1235,11 @@ fn safe_retry_hint(value: Option<String>) -> Option<String> {
 fn map_ureq_err(e: ureq::Error) -> String {
     match e {
         ureq::Error::Status(code, resp) => {
-            // Provider hata gövdesi secret veya custom header değeri yansıtabilir;
-            // kullanıcıya yalnızca güvenli, eyleme dönük sınıflandırma döndürülür.
-            let retry_after = if matches!(code, 429 | 503) {
-                safe_retry_hint(retry_after_from_error_response(resp))
-            } else {
-                drop(resp);
-                None
-            };
+            let (retry_after_raw, error_msg) = parse_error_response(resp);
+            let retry_after = safe_retry_hint(retry_after_raw);
+            if let Some(msg) = error_msg {
+                return msg;
+            }
             match code {
                 400 => {
                     "Invalid request (400) — check the model, endpoint, or protocol settings"
@@ -1180,9 +1248,9 @@ fn map_ureq_err(e: ureq::Error) -> String {
                 402 => "Insufficient credit (402) — check the provider balance or spending limit"
                     .to_string(),
                 429 => retry_after
-                    .map(|delay| format!("Rate limit (429) — {delay} sonra tekrar deneyin"))
+                    .map(|delay| format!("Rate limit (429) — try again after {delay}"))
                     .unwrap_or_else(|| {
-                        "Rate limit (429) — limit penceresi yenilenince tekrar deneyin".to_string()
+                        "Rate limit (429) — wait for the quota window to refresh".to_string()
                     }),
                 503 => retry_after
                     .map(|delay| format!("Server overloaded (503) — try again after {delay}"))
@@ -1419,7 +1487,73 @@ fn anthropic_messages(messages: &[NativeMessage]) -> Vec<serde_json::Value> {
     out
 }
 
-/// LLM chat isteği — native tool calling (provider'a göre payload)
+fn apply_thinking_params(
+    protocol: providers::ProviderProtocol,
+    provider: &str,
+    config: &AppConfig,
+    payload: &mut serde_json::Value,
+) {
+    let mode = config
+        .thinking_mode
+        .as_deref()
+        .unwrap_or("fast")
+        .trim()
+        .to_ascii_lowercase();
+
+    match protocol {
+        providers::ProviderProtocol::AnthropicMessages => {
+            if matches!(mode.as_str(), "deep" | "balanced" | "high" | "medium") {
+                let budget = config.thinking_budget.unwrap_or(if mode == "deep" || mode == "high" {
+                    8192
+                } else {
+                    2048
+                });
+                payload["thinking"] = serde_json::json!({
+                    "type": "enabled",
+                    "budget_tokens": budget
+                });
+                let max_tokens = payload.get("max_tokens").and_then(|v| v.as_u64()).unwrap_or(8192);
+                if max_tokens <= budget {
+                    payload["max_tokens"] = serde_json::json!(budget + 4096);
+                }
+            } else if mode == "off" || mode == "fast" {
+                payload["thinking"] = serde_json::json!({"type": "disabled"});
+            }
+        }
+        providers::ProviderProtocol::GeminiGenerateContent => {
+            let budget = match mode.as_str() {
+                "deep" | "high" => config.thinking_budget.unwrap_or(8192) as i64,
+                "balanced" | "medium" => config.thinking_budget.unwrap_or(2048) as i64,
+                "off" | "fast" => 0,
+                _ => 0,
+            };
+            if payload.get("generationConfig").is_none() {
+                payload["generationConfig"] = serde_json::json!({});
+            }
+            payload["generationConfig"]["thinkingConfig"] =
+                serde_json::json!({ "thinkingBudget": budget });
+        }
+        providers::ProviderProtocol::OpenAiChat => {
+            let effort = match mode.as_str() {
+                "deep" | "high" => "high",
+                "balanced" | "medium" => "medium",
+                "fast" | "low" => "low",
+                _ => "low",
+            };
+            if mode != "off"
+                && (provider == "openai"
+                    || provider == "openrouter"
+                    || provider == "together"
+                    || provider == "groq"
+                    || provider == "deepseek")
+            {
+                payload["reasoning_effort"] = serde_json::json!(effort);
+            }
+        }
+    }
+}
+
+/// Blocking chat çağrısı — hem chat_completion hem sub-agent kullanır
 fn chat_blocking(config: &AppConfig, messages: &[NativeMessage]) -> Result<ChatResult, String> {
     let provider = config.provider.as_str();
     let protocol = providers::effective_protocol(provider, config.protocol.as_deref());
@@ -1440,10 +1574,11 @@ fn chat_blocking(config: &AppConfig, messages: &[NativeMessage]) -> Result<ChatR
         .cloned()
         .collect();
 
-    let body = match protocol {
+    let max_out = config.max_output_tokens.unwrap_or(4096).clamp(256, 16384);
+    let mut payload = match protocol {
         providers::ProviderProtocol::AnthropicMessages => serde_json::json!({
             "model": config.model,
-            "max_tokens": 8192,
+            "max_tokens": max_out,
             "system": system_text,
             "tools": tools.as_array().unwrap_or(&Vec::new()).iter().map(|t| serde_json::json!({
                 "name": t["function"]["name"],
@@ -1451,21 +1586,19 @@ fn chat_blocking(config: &AppConfig, messages: &[NativeMessage]) -> Result<ChatR
                 "input_schema": t["function"]["parameters"]
             })).collect::<Vec<_>>(),
             "messages": anthropic_messages(&non_system)
-        })
-        .to_string(),
+        }),
         providers::ProviderProtocol::GeminiGenerateContent => serde_json::json!({
             "contents": gemini_contents(&non_system),
             "system_instruction": {"parts": [{"text": system_text}]},
-            "generationConfig": {"maxOutputTokens": 8192},
+            "generationConfig": {"maxOutputTokens": max_out},
             "tools": {"functionDeclarations": tools.as_array().unwrap_or(&Vec::new()).iter().map(|t| serde_json::json!({
                 "name": t["function"]["name"],
                 "description": t["function"]["description"],
                 "parameters": t["function"]["parameters"]
             })).collect::<Vec<_>>()}
-        })
-        .to_string(),
+        }),
         providers::ProviderProtocol::OpenAiChat => {
-            let mut payload = serde_json::json!({
+            let mut p = serde_json::json!({
                 "model": config.model,
                 "tools": tools,
                 "tool_choice": "auto",
@@ -1473,14 +1606,16 @@ fn chat_blocking(config: &AppConfig, messages: &[NativeMessage]) -> Result<ChatR
                 "messages": openai_messages(provider, messages)
             });
             if provider == "openai" {
-                payload["max_completion_tokens"] = serde_json::json!(8192);
-                payload["store"] = serde_json::json!(false);
+                p["max_completion_tokens"] = serde_json::json!(max_out);
+                p["store"] = serde_json::json!(false);
             } else {
-                payload["max_tokens"] = serde_json::json!(8192);
+                p["max_tokens"] = serde_json::json!(max_out);
             }
-            payload.to_string()
+            p
         }
     };
+    apply_thinking_params(protocol, provider, config, &mut payload);
+    let body = payload.to_string();
 
     let build = || {
         providers::chat_request(
@@ -1837,10 +1972,11 @@ fn stream_body(config: &AppConfig, messages: &[NativeMessage]) -> String {
         .filter(|message| message.role != "system")
         .cloned()
         .collect::<Vec<_>>();
-    match protocol {
+    let max_out = config.max_output_tokens.unwrap_or(4096).clamp(256, 16384);
+    let mut payload = match protocol {
         providers::ProviderProtocol::AnthropicMessages => serde_json::json!({
             "model": config.model,
-            "max_tokens": 8192,
+            "max_tokens": max_out,
             "stream": true,
             "system": system_text,
             "tools": tools.as_array().unwrap_or(&Vec::new()).iter().map(|tool| serde_json::json!({
@@ -1849,19 +1985,19 @@ fn stream_body(config: &AppConfig, messages: &[NativeMessage]) -> String {
                 "input_schema": tool["function"]["parameters"]
             })).collect::<Vec<_>>(),
             "messages": anthropic_messages(&non_system)
-        }).to_string(),
+        }),
         providers::ProviderProtocol::GeminiGenerateContent => serde_json::json!({
             "contents": gemini_contents(&non_system),
             "system_instruction": {"parts": [{"text": system_text}]},
-            "generationConfig": {"maxOutputTokens": 8192},
+            "generationConfig": {"maxOutputTokens": max_out},
             "tools": {"functionDeclarations": tools.as_array().unwrap_or(&Vec::new()).iter().map(|tool| serde_json::json!({
                 "name": tool["function"]["name"],
                 "description": tool["function"]["description"],
                 "parameters": tool["function"]["parameters"]
             })).collect::<Vec<_>>()}
-        }).to_string(),
+        }),
         providers::ProviderProtocol::OpenAiChat => {
-            let mut payload = serde_json::json!({
+            let mut p = serde_json::json!({
                 "model": config.model,
                 "stream": true,
                 "tools": tools,
@@ -1869,15 +2005,17 @@ fn stream_body(config: &AppConfig, messages: &[NativeMessage]) -> String {
                 "messages": openai_messages(provider, messages)
             });
             if provider == "openai" {
-                payload["max_completion_tokens"] = serde_json::json!(8192);
-                payload["store"] = serde_json::json!(false);
-                payload["stream_options"] = serde_json::json!({"include_usage": true});
+                p["max_completion_tokens"] = serde_json::json!(max_out);
+                p["store"] = serde_json::json!(false);
+                p["stream_options"] = serde_json::json!({"include_usage": true});
             } else {
-                payload["max_tokens"] = serde_json::json!(8192);
+                p["max_tokens"] = serde_json::json!(max_out);
             }
-            payload.to_string()
+            p
         }
-    }
+    };
+    apply_thinking_params(protocol, provider, config, &mut payload);
+    payload.to_string()
 }
 
 #[tauri::command]
@@ -3507,6 +3645,8 @@ mod security_tests {
                 input_price_per_million: None,
                 output_price_per_million: None,
                 cached_input_price_per_million: None,
+                thinking_mode: None,
+                thinking_budget: None,
             }],
             context_limit: None,
             context_ratio: None,
@@ -3522,6 +3662,8 @@ mod security_tests {
             header_names: vec!["X-Tenant".to_string()],
             request_timeout_secs: Some(45),
             allow_local_network: false,
+            thinking_mode: None,
+            thinking_budget: None,
         }
     }
 
@@ -3567,22 +3709,10 @@ mod security_tests {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // `tauri dev` uygulamayi Cargo dizininden (`src-tauri`) baslatir.
-    // Terminalin calisma konumu ise proje koku olmali; aksi halde hem pwd
-    // hem de goreli arac yollari yaniltici bicimde src-tauri'ye baglanir.
+    // If started from project root, point to src-tauri so Tauri config resolves frontendDist "../src"
     if let Ok(current) = std::env::current_dir() {
-        let is_tauri_dir = current
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.eq_ignore_ascii_case("src-tauri"));
-
-        if is_tauri_dir {
-            if let Some(project_root) = current.parent() {
-                if project_root.join("package.json").is_file() && project_root.join("src").is_dir()
-                {
-                    let _ = std::env::set_current_dir(project_root);
-                }
-            }
+        if current.join("src-tauri").is_dir() && current.join("src").is_dir() {
+            let _ = std::env::set_current_dir(current.join("src-tauri"));
         }
     }
 
@@ -3592,6 +3722,31 @@ pub fn run() {
                 .open_js_links_on_click(false)
                 .build(),
         )
+        .setup(|app| {
+            // Restore terminal working directory to project root for tool execution
+            if let Ok(current) = std::env::current_dir() {
+                let is_tauri_dir = current
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.eq_ignore_ascii_case("src-tauri"));
+
+                if is_tauri_dir {
+                    if let Some(project_root) = current.parent() {
+                        if project_root.join("package.json").is_file() && project_root.join("src").is_dir()
+                        {
+                            let _ = std::env::set_current_dir(project_root);
+                        }
+                    }
+                }
+            }
+
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+            Ok(())
+        })
         .manage(streaming::StreamManager::default())
         .invoke_handler(tauri::generate_handler![
             pwd,

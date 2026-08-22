@@ -749,6 +749,8 @@ mod tests {
             header_names: Vec::new(),
             request_timeout_secs: None,
             allow_local_network: false,
+            thinking_mode: None,
+            thinking_budget: None,
         };
         assert_eq!(endpoint_label(&config), "https://example.test");
     }
@@ -777,6 +779,8 @@ mod tests {
             header_names: Vec::new(),
             request_timeout_secs: None,
             allow_local_network: false,
+            thinking_mode: None,
+            thinking_budget: None,
         };
         let openai: serde_json::Value =
             serde_json::from_str(&diagnostic_chat_payload(&config)).unwrap();

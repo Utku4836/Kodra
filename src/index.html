@@ -30,7 +30,7 @@
         <div id="log" class="log"></div>
       </main>
 
-      <!-- BOTTOM BAR — komut input -->
+      <!-- BOTTOM BAR — komut input & dock meta -->
       <footer class="bottom-bar">
         <div class="command-area">
           <div class="command-dock">
@@ -46,20 +46,37 @@
                 autofocus
               />
             </div>
-            <div class="stream-actions" id="stream-actions" hidden>
-              <button class="stream-stop" id="stream-stop" type="button" title="Stop response (Esc)" aria-label="Stop response">
-                <span class="stream-stop-dot" aria-hidden="true"></span>
-                <span class="stream-stop-label">working</span>
-                <kbd>esc</kbd>
-              </button>
-            </div>
           </div>
           <div class="dock-meta">
-            <button class="model-chip" id="model-chip" title="Select model">
-              <span class="model-name" id="model-name">model</span>
-            </button>
-            <div class="ctx-status" id="ctx-status" data-state="ready" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-              <span class="ctx-ring" id="ctx-fill" aria-hidden="true"></span>
+            <div class="dock-meta-left">
+              <button class="model-chip" id="model-chip" title="Select model">
+                <span class="model-name" id="model-name">model</span>
+              </button>
+              <span class="dock-sep" id="dock-sep" aria-hidden="true">·</span>
+              <button class="thinking-label-btn" id="thinking-chip" title="Thinking mode (Click to scrub)" type="button">
+                <span class="thinking-name" id="thinking-name">fast</span>
+              </button>
+              <!-- INLINE EXPANDING THINKING RULER -->
+              <div class="thinking-ruler-wrap" id="thinking-inline-bar" style="display: none;">
+                <div class="thinking-ruler-axis" id="thinking-inline-track"></div>
+              </div>
+            </div>
+            <div class="dock-meta-right">
+              <!-- AI WORKING / STOP INDICATOR — Context'in hemen solunda, sade ve kutusuz -->
+              <button class="stream-inline-btn" id="stream-actions" type="button" title="Stop response (Esc)" aria-label="Stop response" hidden>
+                <span class="stream-stop-dot" aria-hidden="true"></span>
+                <span class="stream-stop-label" id="stream-stop-label">working</span>
+                <kbd class="stream-stop-esc">esc</kbd>
+              </button>
+              <!-- CONTEXT GAUGE -->
+              <div class="ctx-status" id="ctx-status" data-state="ready" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" title="Context usage">
+                <svg class="ctx-gauge-svg" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                  <circle class="ctx-gauge-track" cx="12" cy="12" r="8.5" />
+                  <circle class="ctx-gauge-fill" id="ctx-gauge-fill" cx="12" cy="12" r="8.5" />
+                </svg>
+                <span class="ctx-ring" id="ctx-fill" aria-hidden="true" style="display:none;"></span>
+                <span class="ctx-pct" id="ctx-pct">0%</span>
+              </div>
             </div>
           </div>
         </div>
