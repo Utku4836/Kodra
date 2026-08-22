@@ -53,13 +53,9 @@
                 <span class="model-name" id="model-name">model</span>
               </button>
               <span class="dock-sep" id="dock-sep" aria-hidden="true">·</span>
-              <button class="thinking-label-btn" id="thinking-chip" title="Thinking mode (Click to scrub)" type="button">
-                <span class="thinking-name" id="thinking-name">fast</span>
+              <button class="thinking-label-btn" id="thinking-chip" title="Select thinking mode" type="button">
+                <span class="thinking-name" id="thinking-name">standard</span>
               </button>
-              <!-- INLINE EXPANDING THINKING RULER -->
-              <div class="thinking-ruler-wrap" id="thinking-inline-bar" style="display: none;">
-                <div class="thinking-ruler-axis" id="thinking-inline-track"></div>
-              </div>
             </div>
             <div class="dock-meta-right">
               <!-- AI WORKING / STOP INDICATOR — Context'in hemen solunda, sade ve kutusuz -->
@@ -91,7 +87,7 @@
           <div class="modal-search">
             <input type="text" class="modal-search-input" id="modal-search-input" placeholder="Search..." autocomplete="off" spellcheck="false" />
           </div>
-          <div class="modal-list" id="modal-list"></div>
+          <div class="modal-list" id="modal-list" tabindex="-1"></div>
         </div>
       </div>
 

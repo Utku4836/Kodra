@@ -1,3 +1,5 @@
+import { publicReasoningOptions } from "./thinking-modes.js";
+
 export const RUNTIME_PERFORMANCE_BUDGETS = Object.freeze({
   modelCacheFreshMs: 5 * 60 * 1000,
   modelCacheStaleMs: 60 * 60 * 1000,
@@ -5,7 +7,7 @@ export const RUNTIME_PERFORMANCE_BUDGETS = Object.freeze({
   maxFrameJobsPerScheduler: 1,
 });
 
-export const PUBLIC_MODEL_CACHE_KEY = "cli-ui-public-model-catalog-v1";
+export const PUBLIC_MODEL_CACHE_KEY = "cli-ui-public-model-catalog-v2";
 
 export function publicModelCatalog(items, maxItems = 1200) {
   const source = Array.isArray(items) ? items : [];
@@ -22,6 +24,7 @@ export function publicModelCatalog(items, maxItems = 1200) {
     supportsTools: typeof model?.supportsTools === "boolean" ? model.supportsTools : null,
     supportsReasoning: typeof model?.supportsReasoning === "boolean" ? model.supportsReasoning : null,
     supportsVision: typeof model?.supportsVision === "boolean" ? model.supportsVision : null,
+    reasoningOptions: publicReasoningOptions(model),
     status: String(model?.status || "").slice(0, 32),
     recommended: Boolean(model?.recommended),
   })).filter((model) => model.id && model.providerId);

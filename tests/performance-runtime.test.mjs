@@ -40,6 +40,8 @@ test("offline model snapshot yalniz public katalog alanlarini saklar", () => {
     providerName: "Google Gemini",
     contextWindow: 1000,
     supportsTools: true,
+    supportsReasoning: true,
+    reasoningOptions: ["low", "high"],
     recommended: true,
     apiKey: "secret",
     headers: [{ name: "x-secret", value: "hidden" }],
@@ -47,6 +49,7 @@ test("offline model snapshot yalniz public katalog alanlarini saklar", () => {
   assert.equal(items.length, 1);
   assert.equal(JSON.stringify(items).includes("secret"), false);
   assert.equal(JSON.stringify(items).includes("hidden"), false);
+  assert.deepEqual(items[0].reasoningOptions.map((mode) => mode.id), ["low", "high"]);
   const restored = parsePublicModelCache(JSON.stringify({
     items,
     expiresAt: 10,

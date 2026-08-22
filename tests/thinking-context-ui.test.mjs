@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-test("index.html contains minimal inline thinking bar, stream actions next to context gauge, and SVG context gauge", () => {
+test("index.html contains the minimal thinking trigger, shared selection menu, stream actions, and context gauge", () => {
   const html = fs.readFileSync(path.join(__dirname, "../src/index.html"), "utf8");
   const dom = new JSDOM(html);
   const doc = dom.window.document;
@@ -19,13 +19,13 @@ test("index.html contains minimal inline thinking bar, stream actions next to co
   assert.ok(doc.querySelector(".stream-stop-dot"), "stream-stop-dot exists");
   assert.ok(doc.getElementById("stream-stop-label"), "stream-stop-label exists");
 
-  // 2. Inline Thinking label & scrubber bar
+  // 2. Minimal thinking label opens the shared animated selection menu
   const thinkingChip = doc.getElementById("thinking-chip");
   assert.ok(thinkingChip, "thinking-chip button exists");
   assert.ok(doc.getElementById("dock-sep"), "dock-sep dot exists");
   assert.ok(doc.getElementById("thinking-name"), "thinking-name exists");
-  assert.ok(doc.getElementById("thinking-inline-bar"), "thinking-inline-bar exists");
-  assert.ok(doc.getElementById("thinking-inline-track"), "thinking-inline-track exists");
+  assert.equal(doc.getElementById("thinking-inline-bar"), null, "legacy ruler bar is removed");
+  assert.ok(doc.getElementById("modal-list"), "shared keyboard menu exists");
 
   // 3. SVG context gauge
   const ctxStatus = doc.getElementById("ctx-status");
@@ -72,4 +72,14 @@ test("context gauge calculations produce smooth offsets and threshold states", (
   assert.equal(high.pct, 95);
   assert.equal(high.isMid, false);
   assert.equal(high.isHigh, true);
+});
+
+test("thinking command opens the shared animated menu and writes the Tauri camelCase schema", () => {
+  const main = fs.readFileSync(path.join(__dirname, "../src/main.js"), "utf8");
+  const css = fs.readFileSync(path.join(__dirname, "../src/styles.css"), "utf8");
+  assert.match(main, /openModal\("thinking"\)/);
+  assert.match(main, /revealMenuContent\(modalSurface, "\.modal-category, \.modal-item"/);
+  assert.match(main, /config\.thinkingMode = mode\.id/);
+  assert.doesNotMatch(main, /configCache\.thinking_mode\s*=/);
+  assert.doesNotMatch(css, /\.thinking-ruler-wrap|\.ruler-major-col|\.ruler-minor-tick/);
 });

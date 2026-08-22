@@ -24,6 +24,7 @@ import {
   resolveMotionPreference,
   sampleRefreshRate,
 } from "./ui-motion.js";
+import { resolveThinkingMode, thinkingModesForModel } from "./thinking-modes.js";
 
 const SYSTEM_REDUCED_MOTION = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches || false;
 const MOTION_PREFERENCE_KEY = "cli-ui-motion-preference";
@@ -575,6 +576,10 @@ function upgradeProviderConfig(config) {
         thinkingBudget: config.thinkingBudget ?? config.thinking_budget ?? null,
       }];
   entries.forEach((entry) => {
+    entry.thinkingMode = entry.thinkingMode ?? entry.thinking_mode ?? null;
+    entry.thinkingBudget = entry.thinkingBudget ?? entry.thinking_budget ?? null;
+    delete entry.thinking_mode;
+    delete entry.thinking_budget;
     const id = entry.id || entry.provider;
     const provider = PROVIDER_REGISTRY[id];
     if (!provider) return;
@@ -610,6 +615,10 @@ function upgradeProviderConfig(config) {
       if (LEGACY_DEFAULT_MODELS.has(config.model) && provider.defaultModel) config.model = provider.defaultModel;
     }
   }
+  config.thinkingMode = config.thinkingMode ?? config.thinking_mode ?? null;
+  config.thinkingBudget = config.thinkingBudget ?? config.thinking_budget ?? null;
+  delete config.thinking_mode;
+  delete config.thinking_budget;
   config.providers = entries;
   return scrubSecrets(config);
 }
@@ -805,6 +814,8 @@ async function connectProvider(provider, apiKey) {
       inputPricePerMillion: null,
       outputPricePerMillion: null,
       cachedInputPricePerMillion: null,
+      thinkingMode: null,
+      thinkingBudget: null,
     };
     const providers = Array.isArray(prev.providers) && prev.providers.length > 0
       ? prev.providers.filter((p) => (p.id || p.provider) !== provider.id)
@@ -825,6 +836,8 @@ async function connectProvider(provider, apiKey) {
           inputPricePerMillion: prev.inputPricePerMillion ?? null,
           outputPricePerMillion: prev.outputPricePerMillion ?? null,
           cachedInputPricePerMillion: prev.cachedInputPricePerMillion ?? null,
+          thinkingMode: prev.thinkingMode ?? prev.thinking_mode ?? null,
+          thinkingBudget: prev.thinkingBudget ?? prev.thinking_budget ?? null,
         }] : []);
     providers.push(newProvider);
 
@@ -848,6 +861,8 @@ async function connectProvider(provider, apiKey) {
       inputPricePerMillion: null,
       outputPricePerMillion: null,
       cachedInputPricePerMillion: null,
+      thinkingMode: null,
+      thinkingBudget: null,
       providers,
     };
     await invoke("save_config", { config: configCache });
@@ -903,8 +918,6 @@ const modelChip = document.getElementById("model-chip");
 const modelNameEl = document.getElementById("model-name");
 const thinkingChip = document.getElementById("thinking-chip");
 const thinkingNameEl = document.getElementById("thinking-name");
-const thinkingInlineBar = document.getElementById("thinking-inline-bar");
-const thinkingInlineTrack = document.getElementById("thinking-inline-track");
 const pathEl = document.getElementById("path");
 const ctxFill = document.getElementById("ctx-fill");
 const ctxGaugeFill = document.getElementById("ctx-gauge-fill");
@@ -913,8 +926,6 @@ const ctxStatus = document.getElementById("ctx-status");
 const apiCountEl = document.getElementById("api-count");
 
 let thinkingModesList = [];
-let thinkingActiveIndex = 0;
-let isThinkingBarOpen = false;
 
 let apiCallCount = 0;
 function countApiCall() {
@@ -958,7 +969,7 @@ if (modelChip) {
 }
 
 if (thinkingChip) {
-  thinkingChip.addEventListener("click", () => toggleThinkingBar());
+  thinkingChip.addEventListener("click", () => { void openThinkingMenu(); });
 }
 
 if (ctxStatus) {
@@ -1180,28 +1191,39 @@ function currentContextTokens(history = null) {
 }
 
 function getThinkingModesFor(providerId, modelId) {
-  const cachedModel = (modelCache?.items || []).find((m) => m.id === modelId);
+  const cachedModel = (modelCache?.items || []).find((model) =>
+    model.id === modelId && model.providerId === providerId
+  );
+  return thinkingModesForModel(cachedModel);
+}
 
-  // Read reasoning_options / variants directly from the model returned by the API
-  const apiOptions = cachedModel?.reasoningOptions || cachedModel?.reasoning_options || cachedModel?.variants;
-  if (Array.isArray(apiOptions) && apiOptions.length > 0) {
-    return apiOptions.map((opt) => {
-      if (typeof opt === "string") {
-        return { id: opt, label: opt };
-      }
-      if (opt && typeof opt === "object") {
-        return {
-          id: opt.id || opt.name || opt.value || String(opt),
-          label: opt.label || opt.name || opt.id || opt.value || String(opt),
-          budget: opt.budget ?? opt.budgetTokens ?? opt.budget_tokens ?? undefined,
-        };
-      }
-      return { id: String(opt), label: String(opt) };
-    });
-  }
+function configuredThinkingMode(config = configCache) {
+  if (!config) return null;
+  const activeEntry = Array.isArray(config.providers)
+    ? config.providers.find((provider) => (provider.id || provider.provider) === config.provider)
+    : null;
+  return activeEntry?.thinkingMode
+    ?? activeEntry?.thinking_mode
+    ?? config.thinkingMode
+    ?? config.thinking_mode
+    ?? null;
+}
 
-  // If no reasoning options are returned by the API / model, show only standard:
-  return [{ id: "off", label: "standard", budget: 0 }];
+function setThinkingConfig(config, mode) {
+  if (!config || !mode) return;
+  config.thinkingMode = mode.id;
+  config.thinkingBudget = mode.budget ?? null;
+  delete config.thinking_mode;
+  delete config.thinking_budget;
+  if (!Array.isArray(config.providers)) return;
+  const activeEntry = config.providers.find((provider) =>
+    (provider.id || provider.provider) === config.provider
+  );
+  if (!activeEntry) return;
+  activeEntry.thinkingMode = mode.id;
+  activeEntry.thinkingBudget = mode.budget ?? null;
+  delete activeEntry.thinking_mode;
+  delete activeEntry.thinking_budget;
 }
 
 function updateThinkingChip(modeId = null) {
@@ -1210,117 +1232,45 @@ function updateThinkingChip(modeId = null) {
   const providerId = config?.provider || "openai";
   const modelId = config?.model || "";
   thinkingModesList = getThinkingModesFor(providerId, modelId);
-  const currentModeId = modeId || config?.thinking_mode || thinkingModesList[0]?.id;
-  const currentIdx = thinkingModesList.findIndex((m) => m.id === currentModeId);
-  thinkingActiveIndex = currentIdx >= 0 ? currentIdx : 0;
-  const activeMode = thinkingModesList[thinkingActiveIndex] || thinkingModesList[0];
+  const activeMode = resolveThinkingMode(thinkingModesList, modeId || configuredThinkingMode(config));
 
-  thinkingNameEl.textContent = activeMode?.label || activeMode?.id || "standard";
+  thinkingNameEl.textContent = (activeMode?.label || activeMode?.id || "standard").toLowerCase();
   if (thinkingChip) {
-    thinkingChip.title = `Thinking: ${activeMode?.label || activeMode?.id} (Click to change)`;
+    thinkingChip.title = `Thinking: ${activeMode?.label || activeMode?.id || "Standard"}`;
+    thinkingChip.setAttribute("aria-label", `Select thinking mode. Current: ${activeMode?.label || activeMode?.id || "Standard"}`);
   }
 }
 
-function openThinkingBar() {
-  if (!thinkingInlineBar || !thinkingInlineTrack) return;
-  const config = configCache;
+async function openThinkingMenu() {
+  hideSuggest();
+  const config = configCache || (invoke ? await invoke("get_config") : null);
+  if (!config?.model) {
+    showStatusToast("Select a model first.");
+    return;
+  }
   const providerId = config?.provider || "openai";
   const modelId = config?.model || "";
-  thinkingModesList = getThinkingModesFor(providerId, modelId);
-  const currentModeId = config?.thinking_mode || thinkingModesList[0]?.id;
-  const currentIdx = thinkingModesList.findIndex((m) => m.id === currentModeId);
-  thinkingActiveIndex = currentIdx >= 0 ? currentIdx : 0;
-
-  renderThinkingInlineTrack();
-  thinkingInlineBar.style.display = "inline-flex";
-  isThinkingBarOpen = true;
-  if (thinkingChip) thinkingChip.classList.add("is-open");
-}
-
-function closeThinkingBar() {
-  if (!thinkingInlineBar) return;
-  thinkingInlineBar.style.display = "none";
-  isThinkingBarOpen = false;
-  if (thinkingChip) thinkingChip.classList.remove("is-open");
-}
-
-function toggleThinkingBar() {
-  if (isThinkingBarOpen) {
-    closeThinkingBar();
-  } else {
-    openThinkingBar();
+  const hasCurrentModel = (modelCache?.items || []).some((model) =>
+    model.id === modelId && model.providerId === providerId
+  );
+  if (!hasCurrentModel && invoke) {
+    try { await getModels(); } catch (_) {}
   }
-}
-
-function renderThinkingInlineTrack() {
-  if (!thinkingInlineTrack) return;
-  thinkingInlineTrack.innerHTML = "";
-
-  const count = thinkingModesList.length;
-  if (count === 0) return;
-
-  thinkingModesList.forEach((mode, idx) => {
-    // 1. Major Tick Column
-    const col = document.createElement("div");
-    col.className = `ruler-major-col ${idx === thinkingActiveIndex ? "is-selected" : ""}`;
-    col.setAttribute("data-mode-id", mode.id);
-
-    const mark = document.createElement("div");
-    mark.className = "ruler-major-mark";
-    col.appendChild(mark);
-
-    // Hover previews mode in left chip without any box or popup
-    col.addEventListener("mouseenter", () => {
-      if (thinkingNameEl) thinkingNameEl.textContent = mode.label || mode.id;
-    });
-
-    col.addEventListener("mouseleave", () => {
-      const active = thinkingModesList[thinkingActiveIndex];
-      if (thinkingNameEl && active) thinkingNameEl.textContent = active.label || active.id;
-    });
-
-    col.addEventListener("click", (e) => {
-      e.stopPropagation();
-      thinkingActiveIndex = idx;
-      void applyThinkingSelection(mode.id);
-      renderThinkingInlineTrack();
-    });
-
-    thinkingInlineTrack.appendChild(col);
-
-    // 2. Minor Ticks between major ticks (evenly distributed)
-    if (idx < count - 1) {
-      const minorGrp = document.createElement("div");
-      minorGrp.className = "ruler-minor-group";
-      for (let m = 0; m < 2; m++) {
-        const mTick = document.createElement("div");
-        mTick.className = "ruler-minor-tick";
-        minorGrp.appendChild(mTick);
-      }
-      thinkingInlineTrack.appendChild(minorGrp);
-    }
-  });
+  thinkingModesList = getThinkingModesFor(providerId, modelId);
+  modalAllItems = thinkingModesList;
+  openModal("thinking");
 }
 
 async function applyThinkingSelection(modeId) {
   if (!configCache) return;
-  configCache.thinking_mode = modeId;
-  const mode = thinkingModesList.find((m) => m.id === modeId);
-  if (mode && mode.budget !== undefined) {
-    configCache.thinking_budget = mode.budget;
-  }
-  if (Array.isArray(configCache.providers)) {
-    const activeEntry = configCache.providers.find((p) => (p.id || p.provider) === configCache.provider);
-    if (activeEntry) {
-      activeEntry.thinking_mode = modeId;
-      if (mode && mode.budget !== undefined) activeEntry.thinking_budget = mode.budget;
-    }
-  }
+  const mode = thinkingModesList.find((item) => item.id === modeId);
+  if (!mode) return;
+  setThinkingConfig(configCache, mode);
   try {
     await invoke("save_config", { config: configCache });
   } catch (e) {}
   persistConfigCache();
-  updateThinkingChip(modeId);
+  updateThinkingChip(mode.id);
 }
 
 function updateCtxGauge(history = null, reply = null) {
@@ -1555,6 +1505,7 @@ let modelCache = readPersistentModelCache();
 let modelFetchPromise = null;
 let pendingSessionDelete = null;
 let deleteReturnFocus = null;
+let modalReturnFocus = null;
 let modalCloseGeneration = 0;
 const providerDiagnosticCache = new Map();
 const MODEL_CACHE_TTL_MS = RUNTIME_PERFORMANCE_BUDGETS.modelCacheFreshMs;
@@ -1622,20 +1573,30 @@ function renderModelItem(model) {
 
 function openModal(mode) {
   modalCloseGeneration++;
+  if (!modalVisibility.visible) modalReturnFocus = document.activeElement;
   modalMode = mode;
   modal.dataset.mode = mode;
+  modal.setAttribute("aria-label", mode === "thinking" ? "Thinking mode" : "Selection menu");
   void modalVisibility.open();
   modalSearchInput.value = "";
   modalInputOwner.claimKeyboard();
   renderModalList(modalAllItems);
-  revealMenuContent(modalSurface, ".modal-search", { delay: 42, distance: 7, maxItems: 1 });
-  modalSearchInput.focus({ preventScroll: true });
-  requestAnimationFrame(() => modalSearchInput.focus());
+  if (mode === "thinking") {
+    revealMenuContent(modalSurface, ".modal-category, .modal-item", { delay: 32, stagger: 24, distance: 6, maxItems: 8 });
+    modalList.focus({ preventScroll: true });
+    requestAnimationFrame(() => modalList.focus({ preventScroll: true }));
+  } else {
+    revealMenuContent(modalSurface, ".modal-search", { delay: 42, distance: 7, maxItems: 1 });
+    modalSearchInput.focus({ preventScroll: true });
+    requestAnimationFrame(() => modalSearchInput.focus());
+  }
   updateModalActive();
 }
 
 function closeModal() {
   const generation = ++modalCloseGeneration;
+  const returnFocus = modalReturnFocus;
+  modalReturnFocus = null;
   modalMode = null;
   modalItems = [];
   modalIndex = 0;
@@ -1645,7 +1606,10 @@ function closeModal() {
       delete modal.dataset.mode;
     }
   });
-  cmdInput.focus();
+  const focusTarget = returnFocus instanceof HTMLElement && returnFocus.isConnected
+    ? returnFocus
+    : cmdInput;
+  focusTarget?.focus();
 }
 
 function renderModalList(items) {
@@ -1670,6 +1634,27 @@ function renderModalList(items) {
         modalList.appendChild(el);
         modalItems.push({ el, item: it });
       });
+    });
+  } else if (modalMode === "thinking") {
+    const header = document.createElement("div");
+    header.className = "modal-category";
+    header.textContent = "Thinking";
+    modalList.appendChild(header);
+    const currentMode = resolveThinkingMode(items, configuredThinkingMode());
+    items.forEach((it, index) => {
+      const el = document.createElement("div");
+      el.className = "modal-item thinking-mode-item";
+      const isCurrent = it.id === currentMode.id;
+      if (isCurrent) {
+        el.classList.add("is-current");
+        modalIndex = index;
+      }
+      const label = document.createElement("span");
+      label.className = "thinking-mode-name";
+      label.textContent = it.label || it.id;
+      el.appendChild(label);
+      modalList.appendChild(el);
+      modalItems.push({ el, item: it });
     });
   } else if (modalMode === "diagnostics-providers") {
     const header = document.createElement("div");
@@ -1756,7 +1741,9 @@ function renderModalList(items) {
 
   modalList.setAttribute("role", "listbox");
   modalItems.forEach((row, index) => {
+    row.el.id = `modal-option-${index}`;
     row.el.setAttribute("role", "option");
+    row.el.setAttribute("aria-selected", "false");
     row.el.addEventListener("mouseenter", () => {
       if (!modalInputOwner.acceptsPointer()) return;
       modalIndex = index;
@@ -1776,6 +1763,8 @@ function renderModalList(items) {
 function updateModalActive() {
   const active = modalSelection.moveTo(modalIndex);
   if (!active) return;
+  modalItems.forEach((row, index) => row.el.setAttribute("aria-selected", String(index === modalIndex)));
+  modalList.setAttribute("aria-activedescendant", active.id);
   pendingModalActive = active;
   modalScrollScheduler.schedule();
 }
@@ -1820,6 +1809,7 @@ function transitionModalContent(mode, items, direction = 1) {
 }
 
 function filterModal() {
+  if (modalMode === "thinking") return;
   const q = modalSearchInput.value.toLowerCase();
   if (!q) {
     renderFilteredModal(modalAllItems);
@@ -1858,6 +1848,9 @@ async function selectModalItem() {
   if (modalMode === "models") {
     await selectModel(row.item.providerId, row.item.id, row.item.displayName);
     closeModal();
+  } else if (modalMode === "thinking") {
+    await applyThinkingSelection(row.item.id);
+    closeModal();
   } else if (modalMode === "sessions") {
     const id = row.item.id;
     closeModal();
@@ -1877,7 +1870,6 @@ async function selectModalItem() {
     configCache.mode = m;
     persistConfigCache();
     try { await invoke("save_config", { config: configCache }); } catch (e) {}
-    logLine("mod: " + m, "ok");
   } else if (modalMode === "providers") {
     const p = row.item.provider;
     const linked = (configCache && configCache.providers && configCache.providers.length > 0)
@@ -1898,7 +1890,7 @@ document.addEventListener("keydown", (ev) => {
   if (!modalMode) return;
   if (ev.target === cmdInput) return;
 
-  if (ev.target !== modalSearchInput) {
+  if (modalMode !== "thinking" && ev.target !== modalSearchInput) {
     if (ev.key.length === 1 && !ev.ctrlKey && !ev.metaKey) {
       ev.preventDefault();
       modalSearchInput.value += ev.key;
@@ -1915,7 +1907,7 @@ document.addEventListener("keydown", (ev) => {
 
   if (moveModalSelection(ev.key)) {
     ev.preventDefault();
-  } else if (ev.key === "Enter") {
+  } else if (ev.key === "Enter" || (modalMode === "thinking" && ev.key === " ")) {
     ev.preventDefault();
     selectModalItem();
   } else if (ev.key === "Escape") {
@@ -2048,6 +2040,8 @@ async function selectModel(providerId, id, displayName = "") {
     config.inputPricePerMillion = providerEntry.inputPricePerMillion ?? null;
     config.outputPricePerMillion = providerEntry.outputPricePerMillion ?? null;
     config.cachedInputPricePerMillion = providerEntry.cachedInputPricePerMillion ?? null;
+    config.thinkingMode = providerEntry.thinkingMode ?? null;
+    config.thinkingBudget = providerEntry.thinkingBudget ?? null;
   }
 
   config.provider = providerId;
@@ -2070,6 +2064,8 @@ async function selectModel(providerId, id, displayName = "") {
       inputPricePerMillion: config.inputPricePerMillion ?? null,
       outputPricePerMillion: config.outputPricePerMillion ?? null,
       cachedInputPricePerMillion: config.cachedInputPricePerMillion ?? null,
+      thinkingMode: config.thinkingMode ?? null,
+      thinkingBudget: config.thinkingBudget ?? null,
     }];
   }
   const target = config.providers.find((p) => (p.id || p.provider) === providerId);
@@ -2090,6 +2086,9 @@ async function selectModel(providerId, id, displayName = "") {
       target.outputPricePerMillion = selectedModel.outputPricePerMillion ?? null;
       target.cachedInputPricePerMillion = selectedModel.cachedInputPricePerMillion ?? null;
     }
+    const availableModes = thinkingModesForModel(selectedModel);
+    const selectedMode = resolveThinkingMode(availableModes, configuredThinkingMode(config));
+    setThinkingConfig(config, selectedMode);
   }
   await invoke("save_config", { config });
   configCache = config;
@@ -2176,6 +2175,8 @@ function runtimeConfigForProvider(providerId) {
     inputPricePerMillion: entry.inputPricePerMillion ?? null,
     outputPricePerMillion: entry.outputPricePerMillion ?? null,
     cachedInputPricePerMillion: entry.cachedInputPricePerMillion ?? null,
+    thinkingMode: entry.thinkingMode ?? null,
+    thinkingBudget: entry.thinkingBudget ?? null,
   };
 }
 
@@ -3236,7 +3237,6 @@ async function applySuggest(index) {
     configCache.mode = item.id;
     persistConfigCache();
     try { await invoke("save_config", { config: configCache }); } catch (e) {}
-    logLine("mod: " + item.id, "ok");
   }
 }
 
@@ -3833,7 +3833,7 @@ async function runCommand(cmd) {
       case "thinking":
       case "mode":
       case "reasoning":
-        toggleThinkingBar();
+        await openThinkingMenu();
         break;
 
       case "provider":
@@ -3984,52 +3984,6 @@ async function init() {
     }
   }
 }
-
-document.addEventListener("keydown", (event) => {
-  if (!isThinkingBarOpen) return;
-  if (event.key === "Escape") {
-    event.preventDefault();
-    event.stopPropagation();
-    closeThinkingBar();
-    return;
-  }
-  if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
-    event.preventDefault();
-    event.stopPropagation();
-    if (thinkingModesList.length > 0) {
-      thinkingActiveIndex = (thinkingActiveIndex - 1 + thinkingModesList.length) % thinkingModesList.length;
-      renderThinkingInlineTrack();
-      const selected = thinkingModesList[thinkingActiveIndex];
-      if (selected) void applyThinkingSelection(selected.id);
-    }
-    return;
-  }
-  if (event.key === "ArrowRight" || event.key === "ArrowDown") {
-    event.preventDefault();
-    event.stopPropagation();
-    if (thinkingModesList.length > 0) {
-      thinkingActiveIndex = (thinkingActiveIndex + 1) % thinkingModesList.length;
-      renderThinkingInlineTrack();
-      const selected = thinkingModesList[thinkingActiveIndex];
-      if (selected) void applyThinkingSelection(selected.id);
-    }
-    return;
-  }
-  if (event.key === "Enter" || event.key === " ") {
-    event.preventDefault();
-    event.stopPropagation();
-    const selected = thinkingModesList[thinkingActiveIndex];
-    if (selected) void applyThinkingSelection(selected.id);
-    closeThinkingBar();
-  }
-});
-
-document.addEventListener("click", (event) => {
-  if (!isThinkingBarOpen) return;
-  if (!event.target.closest(".dock-meta-left")) {
-    closeThinkingBar();
-  }
-});
 
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "hidden") return;

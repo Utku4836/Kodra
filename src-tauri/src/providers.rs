@@ -1230,10 +1230,7 @@ mod tests {
         assert!(openrouter
             .url()
             .ends_with("/models?supported_parameters=tools"));
-        assert_eq!(
-            openrouter.header("X-OpenRouter-Title"),
-            Some("Kodra")
-        );
+        assert_eq!(openrouter.header("X-OpenRouter-Title"), Some("Kodra"));
 
         let openrouter_key = openrouter_key_request(
             "https://openrouter.ai/api/v1",
