@@ -70,6 +70,7 @@ Type `/` to open the command menu.
 | Command | Purpose |
 | --- | --- |
 | `/model` | Choose a model from linked providers. |
+| `/thinking` | Choose from the thinking modes reported for the active model. |
 | `/provider` | Add, switch, test, reconnect, or remove a provider. |
 | `/diagnostics` | Inspect provider health and run a deeper connection test. |
 | `/permissions` | Change how tool approvals are handled. |

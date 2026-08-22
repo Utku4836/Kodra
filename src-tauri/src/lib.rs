@@ -1496,37 +1496,48 @@ fn apply_thinking_params(
     let mode = config
         .thinking_mode
         .as_deref()
-        .unwrap_or("fast")
+        .unwrap_or("off")
         .trim()
         .to_ascii_lowercase();
 
     match protocol {
         providers::ProviderProtocol::AnthropicMessages => {
-            if matches!(mode.as_str(), "deep" | "balanced" | "high" | "medium") {
-                let budget = config.thinking_budget.unwrap_or(if mode == "deep" || mode == "high" {
-                    8192
-                } else {
-                    2048
-                });
+            if !matches!(mode.as_str(), "off" | "none" | "disabled" | "standard") {
+                let budget =
+                    config
+                        .thinking_budget
+                        .unwrap_or(if mode == "deep" || mode == "high" {
+                            8192
+                        } else {
+                            2048
+                        });
                 payload["thinking"] = serde_json::json!({
                     "type": "enabled",
                     "budget_tokens": budget
                 });
-                let max_tokens = payload.get("max_tokens").and_then(|v| v.as_u64()).unwrap_or(8192);
+                let max_tokens = payload
+                    .get("max_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(8192);
                 if max_tokens <= budget {
                     payload["max_tokens"] = serde_json::json!(budget + 4096);
                 }
-            } else if mode == "off" || mode == "fast" {
+            } else {
                 payload["thinking"] = serde_json::json!({"type": "disabled"});
             }
         }
         providers::ProviderProtocol::GeminiGenerateContent => {
-            let budget = match mode.as_str() {
-                "deep" | "high" => config.thinking_budget.unwrap_or(8192) as i64,
-                "balanced" | "medium" => config.thinking_budget.unwrap_or(2048) as i64,
-                "off" | "fast" => 0,
-                _ => 0,
-            };
+            let budget = config
+                .thinking_budget
+                .map(|value| value as i64)
+                .unwrap_or_else(|| {
+                    mode.parse::<i64>().unwrap_or(match mode.as_str() {
+                        "deep" | "high" | "xhigh" => 8192,
+                        "balanced" | "medium" => 2048,
+                        "fast" | "low" | "minimal" => 1024,
+                        _ => 0,
+                    })
+                });
             if payload.get("generationConfig").is_none() {
                 payload["generationConfig"] = serde_json::json!({});
             }
@@ -1535,12 +1546,12 @@ fn apply_thinking_params(
         }
         providers::ProviderProtocol::OpenAiChat => {
             let effort = match mode.as_str() {
-                "deep" | "high" => "high",
-                "balanced" | "medium" => "medium",
-                "fast" | "low" => "low",
-                _ => "low",
+                "deep" => "high",
+                "balanced" => "medium",
+                "fast" => "low",
+                other => other,
             };
-            if mode != "off"
+            if !matches!(effort, "off" | "standard" | "disabled")
                 && (provider == "openai"
                     || provider == "openrouter"
                     || provider == "together"
@@ -3669,12 +3680,58 @@ mod security_tests {
 
     #[test]
     fn serialized_config_never_contains_api_keys() {
-        let json = serde_json::to_string(&config_with_legacy_secret()).unwrap();
+        let mut config = config_with_legacy_secret();
+        config.thinking_mode = Some("high".to_string());
+        let json = serde_json::to_string(&config).unwrap();
         assert!(!json.contains("sk-never-write-this"));
         assert!(!json.contains("sk-linked-secret"));
         assert!(!json.contains("apiKey"));
         assert!(json.contains("provider:openai"));
         assert!(json.contains("X-Tenant"));
+        assert!(json.contains("\"thinkingMode\":\"high\""));
+        assert!(!json.contains("thinking_mode"));
+    }
+
+    #[test]
+    fn thinking_mode_forwards_api_effort_and_disables_standard_requests() {
+        let mut config = config_with_legacy_secret();
+        config.thinking_mode = Some("xhigh".to_string());
+        let mut payload = serde_json::json!({});
+        apply_thinking_params(
+            providers::ProviderProtocol::OpenAiChat,
+            "openai",
+            &config,
+            &mut payload,
+        );
+        assert_eq!(payload["reasoning_effort"], "xhigh");
+
+        config.thinking_mode = Some("off".to_string());
+        let mut standard_payload = serde_json::json!({});
+        apply_thinking_params(
+            providers::ProviderProtocol::OpenAiChat,
+            "openai",
+            &config,
+            &mut standard_payload,
+        );
+        assert!(standard_payload.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn thinking_budget_reaches_gemini_generation_config() {
+        let mut config = config_with_legacy_secret();
+        config.thinking_mode = Some("high".to_string());
+        config.thinking_budget = Some(4096);
+        let mut payload = serde_json::json!({});
+        apply_thinking_params(
+            providers::ProviderProtocol::GeminiGenerateContent,
+            "gemini",
+            &config,
+            &mut payload,
+        );
+        assert_eq!(
+            payload.pointer("/generationConfig/thinkingConfig/thinkingBudget"),
+            Some(&serde_json::json!(4096))
+        );
     }
 
     #[test]
@@ -3732,7 +3789,8 @@ pub fn run() {
 
                 if is_tauri_dir {
                     if let Some(project_root) = current.parent() {
-                        if project_root.join("package.json").is_file() && project_root.join("src").is_dir()
+                        if project_root.join("package.json").is_file()
+                            && project_root.join("src").is_dir()
                         {
                             let _ = std::env::set_current_dir(project_root);
                         }

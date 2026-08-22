@@ -7,11 +7,20 @@ All notable changes to Kodra are recorded here. The project follows [Semantic Ve
 ### Added
 
 - Selecting a linked provider now opens its API key screen so the credential can be replaced; entering a new key overwrites the old one.
+- Added Groq as a first-class provider with live model discovery.
+- Added a compact, animated `/thinking` menu that exposes only the modes reported for the active model.
 
 ### Changed
 
 - Released the project under the MIT License and made the repository public.
 - Removed Turkish code comments; all comments and documentation are English.
+- Replaced the experimental inline thinking ruler with the shared keyboard-first menu design.
+
+### Fixed
+
+- Persist thinking selections with the camelCase configuration schema expected by Tauri and carry them across provider switches.
+- Preserve public reasoning-mode metadata in the offline model cache without storing provider secrets.
+- Forward API-provided OpenAI-compatible reasoning efforts instead of collapsing unknown supported modes to `low`.
 
 ### Planned
 
