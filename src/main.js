@@ -25,6 +25,26 @@ import {
   sampleRefreshRate,
 } from "./ui-motion.js";
 import { resolveThinkingMode, thinkingModesForModel } from "./thinking-modes.js";
+import { createActivityGroup, toolTarget } from "./activity-ui.js";
+import { setDiffViewMode } from "./diff-viewer.js";
+import {
+  renderToolApproval,
+  renderToolResult,
+  toolFailed,
+  toolSummary,
+} from "./tool-renderers.js";
+import {
+  SESSION_SCHEMA_VERSION,
+  addActivityThinking,
+  addActivityTool,
+  appendTranscriptEntry,
+  createActivityTranscript,
+  createTranscriptEntry,
+  migrateMessagesToTranscript,
+  normalizeTranscript,
+} from "./session-transcript.js";
+import { createTranscriptVirtualizer } from "./transcript-virtualizer.js";
+import { createWindowShell } from "./window-shell.js";
 
 const SYSTEM_REDUCED_MOTION = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches || false;
 const MOTION_PREFERENCE_KEY = "cli-ui-motion-preference";
@@ -162,24 +182,38 @@ const logEl = document.getElementById("log");
 const mainArea = document.querySelector(".main-area");
 let followOutput = true;
 let logRenderTarget = logEl;
+const transcriptVirtualizer = createTranscriptVirtualizer({
+  container: logEl,
+  scrollRoot: mainArea,
+  maxOperationsPerFrame: 6,
+});
 const autoScrollScheduler = createFrameCoalescer(() => {
   if (followOutput) mainArea.scrollTop = mainArea.scrollHeight;
+  transcriptVirtualizer.schedule();
 });
 
 function appendLogElement(element) {
-  logRenderTarget.appendChild(element);
+  if (logRenderTarget === logEl) transcriptVirtualizer.append(element);
+  else logRenderTarget.appendChild(element);
   return element;
 }
 
 if (mainArea) {
   mainArea.addEventListener("scroll", () => {
     followOutput = mainArea.scrollTop >= mainArea.scrollHeight - mainArea.clientHeight - 48;
+    transcriptVirtualizer.schedule();
   }, { passive: true });
 }
 
-function escapeHtml(s) {
-  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
+const DIFF_VIEW_KEY = "kodra-diff-view";
+let preferredDiffView = localStorage.getItem(DIFF_VIEW_KEY) === "split" ? "split" : "unified";
+document.addEventListener("click", (event) => {
+  const button = event.target.closest?.("[data-diff-mode]");
+  if (!button) return;
+  const viewer = button.closest(".tool-diff");
+  preferredDiffView = setDiffViewMode(viewer, button.dataset.diffMode);
+  localStorage.setItem(DIFF_VIEW_KEY, preferredDiffView);
+});
 
 function autoScroll() {
   if (!mainArea || !followOutput) return;
@@ -304,120 +338,6 @@ async function animatedRichMessage(text, cls = "assistant-response") {
   return renderer.finish(cls);
 }
 
-function logItem(label, opts) {
-  opts = opts || {};
-  const item = document.createElement("div");
-  item.className = "log-item";
-  item.dataset.status = opts.status || "busy";
-
-  const head = document.createElement("div");
-  head.className = "log-item-head";
-
-  const status = document.createElement("span");
-  const st = opts.status || "busy";
-  status.className = "log-item-status st-" + st;
-  status.textContent = st === "ok" ? "[OK]" : st === "err" ? "[ERR]" : st === "run" ? "[>]" : "[~]";
-
-  const lbl = document.createElement("span");
-  lbl.className = "log-item-label" + (opts.dim ? " dim" : "") + (opts.err ? " err" : "");
-  if (opts.toolName) {
-    const toolName = document.createElement("span");
-    toolName.className = "log-item-tool";
-    toolName.textContent = String(opts.toolName).replace(/_/g, " ");
-    lbl.appendChild(toolName);
-    if (opts.target) {
-      const separator = document.createElement("span");
-      separator.className = "log-item-separator";
-      separator.textContent = "·";
-      const target = document.createElement("span");
-      target.className = "log-item-target";
-      target.textContent = opts.target;
-      lbl.appendChild(separator);
-      lbl.appendChild(target);
-    }
-  } else {
-    lbl.textContent = label;
-  }
-
-  const time = document.createElement("span");
-  time.className = "log-item-time";
-  time.textContent = opts.time || "";
-
-  const arrow = document.createElement("span");
-  arrow.className = "log-item-arrow";
-  arrow.textContent = ">";
-
-  head.appendChild(status);
-  head.appendChild(lbl);
-  head.appendChild(time);
-  head.appendChild(arrow);
-
-  const body = document.createElement("div");
-  body.className = "log-item-body";
-  const inner = document.createElement("div");
-  inner.className = "log-item-body-inner";
-  const content = document.createElement("div");
-  content.className = "log-item-body-content";
-  if (opts.bodyHtml) content.innerHTML = opts.bodyHtml;
-  else if (opts.bodyText !== undefined) content.textContent = opts.bodyText;
-  inner.appendChild(content);
-  body.appendChild(inner);
-
-  item.appendChild(head);
-  item.appendChild(body);
-
-  if (!opts.noToggle) {
-    head.setAttribute("role", "button");
-    head.setAttribute("tabindex", "0");
-    head.setAttribute("aria-expanded", "false");
-
-    const toggleItem = () => {
-      const isOpen = item.classList.toggle("open");
-      head.setAttribute("aria-expanded", String(isOpen));
-    };
-
-    head.addEventListener("click", toggleItem);
-    head.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        toggleItem();
-      }
-    });
-  } else {
-    arrow.style.display = "none";
-    body.style.display = "none";
-  }
-
-  appendLogElement(item);
-  if (!uiMotion.reducedMotion() && item.animate) {
-    item.animate(
-      [
-        { opacity: 0, transform: "translateY(-7px) scaleY(0.76)", filter: "blur(4px)" },
-        { opacity: 1, transform: "translateY(0) scaleY(1)", filter: "blur(0)" },
-      ],
-      { duration: 180, easing: "cubic-bezier(0.2, 0.88, 0.25, 1)" }
-    );
-  }
-  autoScroll();
-  return {
-    item,
-    body: content,
-    lbl,
-    setTime: (t) => { time.textContent = t; },
-    setStatus: (s) => {
-      item.dataset.status = s;
-      if (s === "ok" || s === "err") {
-        status.style.display = "none"; // rozet yok ? sade ve temiz
-      } else {
-        status.style.display = "";
-        status.className = "log-item-status st-" + s;
-        status.textContent = s === "run" ? "[>]" : "[~]";
-      }
-    },
-  };
-}
-
-
 let HOME_DIR = "";
 let WORKSPACE_DIR = "";
 
@@ -453,35 +373,6 @@ function renderAlert(msg) {
   autoScroll();
   return div;
 }
-
-let spotlightCard = null;
-let spotlightPoint = null;
-let spotlightRect = null;
-const spotlightScheduler = createFrameCoalescer(() => {
-  if (!spotlightCard || !spotlightPoint) return;
-  spotlightRect ||= spotlightCard.getBoundingClientRect();
-  spotlightCard.style.setProperty("--mx", `${spotlightPoint.x - spotlightRect.left}px`);
-  spotlightCard.style.setProperty("--my", `${spotlightPoint.y - spotlightRect.top}px`);
-});
-
-logEl.addEventListener("pointermove", (event) => {
-  const card = event.target instanceof Element ? event.target.closest(".log-item") : null;
-  if (card !== spotlightCard) {
-    spotlightCard = card;
-    spotlightRect = null;
-  }
-  spotlightPoint = card ? { x: event.clientX, y: event.clientY } : null;
-  spotlightScheduler.schedule();
-}, { passive: true });
-
-logEl.addEventListener("pointerleave", () => {
-  spotlightCard = null;
-  spotlightPoint = null;
-  spotlightRect = null;
-});
-
-mainArea?.addEventListener("scroll", () => { spotlightRect = null; }, { passive: true });
-window.addEventListener("resize", () => { spotlightRect = null; }, { passive: true });
 
 function createStreamRenderer() {
   const el = document.createElement("div");
@@ -906,13 +797,12 @@ document.addEventListener("keydown", (ev) => {
   }
 });
 
-const btnClose = document.getElementById("btn-close");
-const btnMin = document.getElementById("btn-min");
-const btnMax = document.getElementById("btn-max");
-
-if (btnClose) btnClose.addEventListener("click", async () => { try { await tauriWindow?.getCurrentWindow()?.close(); } catch (e) {} });
-if (btnMin) btnMin.addEventListener("click", async () => { try { await tauriWindow?.getCurrentWindow()?.minimize(); } catch (e) {} });
-if (btnMax) btnMax.addEventListener("click", async () => { try { await tauriWindow?.getCurrentWindow()?.toggleMaximize(); } catch (e) {} });
+createWindowShell({
+  root: document.getElementById("app-shell"),
+  dragRegion: document.getElementById("window-drag-region"),
+  menu: document.getElementById("window-menu"),
+  windowApi: tauriWindow,
+});
 
 const modelChip = document.getElementById("model-chip");
 const modelNameEl = document.getElementById("model-name");
@@ -921,7 +811,6 @@ const thinkingNameEl = document.getElementById("thinking-name");
 const pathEl = document.getElementById("path");
 const ctxFill = document.getElementById("ctx-fill");
 const ctxGaugeFill = document.getElementById("ctx-gauge-fill");
-const ctxPct = document.getElementById("ctx-pct");
 const ctxStatus = document.getElementById("ctx-status");
 const apiCountEl = document.getElementById("api-count");
 
@@ -970,6 +859,87 @@ if (modelChip) {
 
 if (thinkingChip) {
   thinkingChip.addEventListener("click", () => { void openThinkingMenu(); });
+}
+
+function animateActivityElement(element, kind, details = {}) {
+  if (kind === "toggle") transcriptVirtualizer.invalidate();
+  if (uiMotion.reducedMotion()) return;
+  if (kind === "toggle") {
+    const panelInner = element.children[1]?.firstElementChild;
+    if (panelInner) {
+      void uiMotion.play(panelInner, details.expanded ? [
+        { opacity: 0.22, transform: "translateY(-4px)" },
+        { opacity: 1, transform: "translateY(0)" },
+      ] : [
+        { opacity: 1, transform: "translateY(0)" },
+        { opacity: 0.25, transform: "translateY(-3px)" },
+      ], {
+        duration: details.expanded ? UI_MOTION.content : UI_MOTION.fast,
+        easing: details.expanded ? "cubic-bezier(0.16, 0.82, 0.22, 1)" : "cubic-bezier(0.4, 0, 0.7, 0.2)",
+      });
+    }
+    if (details.expanded && details.scope === "group") {
+      const rows = panelInner ? [...panelInner.children] : [];
+      animateElementGroup(uiMotion, rows, { delay: 20, stagger: 14, distance: 5, duration: UI_MOTION.fast });
+    }
+    return;
+  }
+  if (kind === "status") {
+    const label = element.firstElementChild?.querySelector(".activity-label");
+    if (label) {
+      void uiMotion.play(label, [
+        { opacity: 0.46, transform: "translateY(1px)" },
+        { opacity: 1, transform: "translateY(0)" },
+      ], { duration: UI_MOTION.select, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" });
+    }
+    return;
+  }
+  void uiMotion.play(element, [
+    { opacity: 0, transform: kind === "group" ? "translateY(5px)" : "translateY(3px)" },
+    { opacity: 1, transform: "translateY(0)" },
+  ], {
+    duration: kind === "group" ? UI_MOTION.panel : UI_MOTION.fast,
+    easing: "cubic-bezier(0.2, 0.88, 0.25, 1)",
+  });
+}
+
+function createLogActivity(options = {}) {
+  return createActivityGroup({
+    documentRef: document,
+    mount: appendLogElement,
+    animate: animateActivityElement,
+    onChange: autoScroll,
+    startedAt: options.startedAt,
+  });
+}
+
+function logItem(label, opts = {}) {
+  const activity = opts.activity || createLogActivity();
+  const item = activity.addTool({
+    toolId: opts.toolName || label,
+    params: opts.params || {},
+    target: opts.target || "",
+    status: opts.status || "run",
+    shorten: shortPath,
+  });
+  if (opts.time) item.setTime(opts.time);
+  if (opts.bodyHtml) {
+    item.body.innerHTML = opts.bodyHtml;
+    item.revealOutput();
+  } else if (opts.bodyText !== undefined && String(opts.bodyText).trim()) {
+    item.body.textContent = opts.bodyText;
+    item.revealOutput();
+  }
+  if (!opts.activity) activity.finish(opts.status === "err" ? "err" : "ok", false);
+  autoScroll();
+  return item;
+}
+
+function applyToolPresentation(item, presentation) {
+  item.body.classList.toggle("has-diff", presentation.kind === "diff");
+  if (presentation.kind === "html" || presentation.kind === "diff") item.body.innerHTML = presentation.html;
+  else item.body.textContent = presentation.text || "";
+  if (item.body.textContent.trim() || item.body.children.length) item.revealOutput();
 }
 
 if (ctxStatus) {
@@ -1293,9 +1263,6 @@ function updateCtxGauge(history = null, reply = null) {
     ctxGaugeFill.style.strokeDashoffset = String(offset);
   }
 
-  if (ctxPct) {
-    ctxPct.textContent = Math.round(pct) + "%";
-  }
 
   ctxStatus.classList.toggle("mid", pct > 70 && pct <= 90);
   ctxStatus.classList.toggle("high", pct > 90);
@@ -2626,6 +2593,7 @@ const streamActions = document.getElementById("stream-actions");
 let cmdHistory = [];
 let historyIdx = -1;
 let conversationHistory = [];
+let sessionTranscript = [];
 let currentSession = null;
 let activeRequestId = null;
 let activeStreamRenderer = null;
@@ -2650,13 +2618,17 @@ async function ensureSession(firstMessage) {
     workspace: WORKSPACE_DIR || "",
   });
   normalizeSessionIntelligence(currentSession);
+  currentSession.schemaVersion = SESSION_SCHEMA_VERSION;
+  sessionTranscript = normalizeTranscript(currentSession);
   return currentSession;
 }
 
 async function checkpointSession(draft = null, status = "active") {
   if (!currentSession) return;
   normalizeSessionIntelligence(currentSession);
+  currentSession.schemaVersion = SESSION_SCHEMA_VERSION;
   currentSession.messages = conversationHistory;
+  currentSession.transcript = sessionTranscript;
   currentSession.draft = draft;
   currentSession.status = status;
   currentSession.provider = configCache?.provider || currentSession.provider;
@@ -3040,34 +3012,40 @@ async function generateSmartSessionTitle(userMessage, assistantText) {
   }
 }
 
-function renderSession(record) {
-  logEl.innerHTML = "";
+function renderStructuredSession(record, transcript) {
+  transcriptVirtualizer.clear();
   const fragment = document.createDocumentFragment();
   logRenderTarget = fragment;
-  const savedToolCalls = new Map();
   try {
-    for (const message of record.messages || []) {
-      if (message.role === "user") userBlock(message.content || "");
-      else if (message.role === "assistant") {
-        for (const call of message.toolCalls || []) savedToolCalls.set(call.id, call);
-        if (message.content) completedRichMessage(message.content, (message.toolCalls || []).length ? "ai-step complete" : "assistant-response");
-      }
-      else if (message.role === "tool") {
-        const content = String(message.content || "");
-        const match = content.match(/^\[tool:([^\]]+)]\s*/);
-        const savedCall = savedToolCalls.get(message.toolCallId);
-        const toolName = savedCall?.name || match?.[1] || "tool result";
-        const params = savedCall?.arguments && typeof savedCall.arguments === "object" ? savedCall.arguments : {};
-        const target = toolName === "execute_command"
-          ? String(params.command || params.cmd || "").slice(0, 60)
-          : shortPath(params.path || params.url || params.pattern || "").slice(0, 60);
-        const restoredItem = logItem(toolName, {
-          status: "ok",
-          toolName,
-          target,
-          bodyText: content.slice(match?.[0]?.length || 0),
-        });
-        restoredItem.setStatus("ok");
+    for (const entry of transcript) {
+      if (entry.type === "user") userBlock(entry.text || "");
+      else if (entry.type === "assistant") completedRichMessage(entry.text || "", "assistant-response");
+      else if (entry.type === "system") logLine(entry.text || "", "sys");
+      else if (entry.type === "activity") {
+        const activity = createLogActivity({ startedAt: entry.startedAt });
+        for (const thought of entry.thinking || []) {
+          const text = [thought.text, thought.progress].filter(Boolean).join("\n\n");
+          if (!text) continue;
+          const thinking = activity.addThinking();
+          mountMarkdown(thinking.body, stripEmojis(replacePaths(text)));
+          thinking.setComplete();
+        }
+        for (const tool of [...(entry.tools || [])].sort((left, right) => Number(left.order || 0) - Number(right.order || 0))) {
+          const item = logItem(tool.toolId, {
+            activity,
+            params: tool.params || {},
+            status: tool.status || "ok",
+            toolName: tool.toolId,
+            target: toolTarget(tool.toolId, tool.params || {}, shortPath),
+          });
+          if (tool.durationMs) item.setTime(`${(Number(tool.durationMs) / 1000).toFixed(1)}s`);
+          applyToolPresentation(item, renderToolResult(tool.toolId, tool.params || {}, tool.result || {}, {
+            shortenPath: shortPath,
+            mode: preferredDiffView,
+          }));
+          item.setStatus(tool.status || "ok");
+        }
+        activity.finish(entry.status || "ok", Number.isFinite(Number(entry.durationMs)) ? Number(entry.durationMs) : false);
       }
     }
     if (record.draft?.text) {
@@ -3079,7 +3057,95 @@ function renderSession(record) {
     logRenderTarget = logEl;
   }
   logEl.appendChild(fragment);
+  transcriptVirtualizer.capture();
   updateCtxGauge(conversationHistory, null);
+}
+
+function renderLegacySession(record) {
+  transcriptVirtualizer.clear();
+  const fragment = document.createDocumentFragment();
+  logRenderTarget = fragment;
+  const savedToolCalls = new Map();
+  let activity = null;
+
+  const ensureActivity = () => {
+    if (!activity) activity = createLogActivity();
+    return activity;
+  };
+  const finishActivity = () => {
+    if (!activity) return;
+    activity.finish("ok", false);
+    activity = null;
+  };
+
+  try {
+    for (const message of record.messages || []) {
+      if (message.role === "user") {
+        finishActivity();
+        userBlock(message.content || "");
+      }
+      else if (message.role === "assistant") {
+        const calls = message.toolCalls || [];
+        const reasoning = String(message.reasoningContent || "").trim();
+        const progress = calls.length ? String(message.content || "").trim() : "";
+        if (reasoning || progress) {
+          const thinking = ensureActivity().addThinking();
+          mountMarkdown(thinking.body, [reasoning, progress].filter(Boolean).join("\n\n"));
+          thinking.setComplete();
+        }
+        for (const call of calls) savedToolCalls.set(call.id, { call, activity: ensureActivity() });
+        if (!calls.length) {
+          finishActivity();
+          if (message.content) completedRichMessage(message.content, "assistant-response");
+        }
+      }
+      else if (message.role === "tool") {
+        const content = String(message.content || "");
+        const match = content.match(/^\[tool:([^\]]+)]\s*/);
+        const saved = savedToolCalls.get(message.toolCallId);
+        const savedCall = saved?.call;
+        const toolName = savedCall?.name || match?.[1] || "tool_result";
+        const params = savedCall?.arguments && typeof savedCall.arguments === "object" ? savedCall.arguments : {};
+        const target = toolTarget(toolName, params, shortPath);
+        const presentation = renderToolResult(toolName, params, { message: content.slice(match?.[0]?.length || 0) }, {
+          shortenPath: shortPath,
+          mode: preferredDiffView,
+        });
+        const restoredItem = logItem(toolName, {
+          activity: saved?.activity || ensureActivity(),
+          params,
+          status: "ok",
+          toolName,
+          target,
+        });
+        applyToolPresentation(restoredItem, presentation);
+        restoredItem.setStatus("ok");
+      }
+    }
+    finishActivity();
+    if (record.draft?.text) {
+      const partial = completedRichMessage(record.draft.text);
+      partial.classList.add("interrupted-response");
+      partial.title = "This response was interrupted before completion and was not added to provider history.";
+    }
+  } finally {
+    logRenderTarget = logEl;
+  }
+  logEl.appendChild(fragment);
+  transcriptVirtualizer.capture();
+  updateCtxGauge(conversationHistory, null);
+}
+
+function renderSession(record) {
+  let transcript = normalizeTranscript(record);
+  if (!transcript.length && Array.isArray(record.messages) && record.messages.length) {
+    transcript = migrateMessagesToTranscript(record.messages);
+    record.schemaVersion = SESSION_SCHEMA_VERSION;
+    record.transcript = transcript;
+  }
+  sessionTranscript = transcript;
+  if (transcript.length) renderStructuredSession(record, transcript);
+  else renderLegacySession(record);
 }
 
 async function resumeSession(id) {
@@ -3116,7 +3182,8 @@ async function newSession() {
   if (activeRequestId) await stopActiveStream();
   currentSession = null;
   conversationHistory = [];
-  logEl.innerHTML = "";
+  sessionTranscript = [];
+  transcriptVirtualizer.clear();
   updateCtxGauge([], null);
   cmdInput.focus();
 }
@@ -3208,7 +3275,7 @@ if (cmdInput) {
       }
     } else if (ev.key === "l" && ev.ctrlKey) {
       ev.preventDefault();
-      logEl.innerHTML = "";
+      transcriptVirtualizer.clear();
     }
   });
 
@@ -3285,94 +3352,8 @@ const approvalVisibility = createVisibilityController(uiMotion, {
   surfaceCloseDuration: UI_MOTION.fast,
 });
 
-function wordDiff(oldText, newText) {
-  const o = String(oldText || "");
-  const n = String(newText || "");
-  let prefix = 0;
-  while (prefix < o.length && prefix < n.length && o[prefix] === n[prefix]) prefix++;
-  let suffix = 0;
-  while (suffix < o.length - prefix && suffix < n.length - prefix && o[o.length - 1 - suffix] === n[n.length - 1 - suffix]) suffix++;
-  const oMid = o.slice(prefix, o.length - suffix);
-  const nMid = n.slice(prefix, n.length - suffix);
-  return {
-    oldHtml: escapeHtml(o.slice(0, prefix)) + '<span class="diff-word-del">' + escapeHtml(oMid) + "</span>" + escapeHtml(o.slice(o.length - suffix)),
-    newHtml: escapeHtml(n.slice(0, prefix)) + '<span class="diff-word-add">' + escapeHtml(nMid) + "</span>" + escapeHtml(n.slice(n.length - suffix)),
-  };
-}
-
-function parseUnifiedDiff(diffContent) {
-  const lines = String(diffContent || "").split("\n");
-  const out = [];
-  let oldLine = 0, newLine = 0, add = 0, del = 0;
-  for (const raw of lines) {
-    const line = raw.replace(/\r$/, "");
-    if (line.startsWith("@@")) {
-      const m = /@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
-      if (m) { oldLine = parseInt(m[1], 10); newLine = parseInt(m[2], 10); }
-      out.push({ type: "hunk", text: line });
-    } else if (line.startsWith("---") || line.startsWith("+++")) {
-      out.push({ type: "context", text: line });
-    } else if (line.startsWith("-")) {
-      out.push({ type: "del", old: oldLine++, text: line.slice(1) }); del++;
-    } else if (line.startsWith("+")) {
-      out.push({ type: "add", new: newLine++, text: line.slice(1) }); add++;
-    } else {
-      out.push({ type: "context", old: oldLine++, new: newLine++, text: line.slice(1) });
-    }
-  }
-  return { lines: out, add, del };
-}
-
-function renderDiffHtml(toolId, params) {
-  if (toolId === "apply_diff") {
-    const { lines, add, del } = parseUnifiedDiff(params.diff_content);
-    let html = '<div class="diff-metrics">' + escapeHtml(shortPath(params.path || "")) + ' <span class="m-add">+' + add + '</span> <span class="m-del">-' + del + "</span></div>";
-    for (const l of lines) {
-      if (l.type === "hunk") html += '<div class="diff-hunk">' + escapeHtml(l.text) + "</div>";
-      else if (l.type === "add") html += '<div class="diff-line diff-add"><span class="diff-num"></span><span class="diff-num">' + (l.new || "") + '</span><span class="diff-sign">+</span><span>' + escapeHtml(l.text) + "</span></div>";
-      else if (l.type === "del") html += '<div class="diff-line diff-del"><span class="diff-num">' + (l.old || "") + '</span><span class="diff-num"></span><span class="diff-sign">-</span><span>' + escapeHtml(l.text) + "</span></div>";
-      else html += '<div class="diff-line diff-context"><span class="diff-num">' + (l.old || "") + '</span><span class="diff-num">' + (l.new || "") + '</span><span class="diff-sign"> </span><span>' + escapeHtml(l.text) + "</span></div>";
-    }
-    return html;
-  }
-
-  if (toolId === "edit_file") {
-    const oldLines = String(params.old_string || params.old || "").split("\n");
-    const newLines = String(params.new_string || params.new || "").split("\n");
-    let html = '<div class="diff-metrics">' + escapeHtml(shortPath(params.path || "")) + ' <span class="m-add">+' + newLines.length + '</span> <span class="m-del">-' + oldLines.length + "</span></div>";
-    let o = 1, n = 1;
-    for (const ol of oldLines) html += '<div class="diff-line diff-del"><span class="diff-num">' + o++ + '</span><span class="diff-num"></span><span class="diff-sign">-</span><span>' + escapeHtml(ol) + "</span></div>";
-    for (const nl of newLines) html += '<div class="diff-line diff-add"><span class="diff-num"></span><span class="diff-num">' + n++ + '</span><span class="diff-sign">+</span><span>' + escapeHtml(nl) + "</span></div>";
-    if (oldLines.length === 1 && newLines.length === 1) {
-      const wd = wordDiff(params.old_string || params.old, params.new_string || params.new);
-      html = '<div class="diff-metrics">' + escapeHtml(shortPath(params.path || "")) + ' <span class="m-add">+1</span> <span class="m-del">-1</span></div>' +
-        '<div class="diff-line diff-del"><span class="diff-num">1</span><span class="diff-num"></span><span class="diff-sign">-</span><span>' + wd.oldHtml + "</span></div>" +
-        '<div class="diff-line diff-add"><span class="diff-num"></span><span class="diff-num">1</span><span class="diff-sign">+</span><span>' + wd.newHtml + "</span></div>";
-    }
-    return html;
-  }
-
-  if (toolId === "write_file") {
-    const contentLines = String(params.content || "").split("\n");
-    let html = '<div class="diff-metrics">' + escapeHtml(shortPath(params.path || "")) + ' <span class="m-add">+' + contentLines.length + " lines in new file</span></div>";
-    let n = 1;
-    for (const cl of contentLines.slice(0, 60)) html += '<div class="diff-line diff-add"><span class="diff-num"></span><span class="diff-num">' + n++ + '</span><span class="diff-sign">+</span><span>' + escapeHtml(cl) + "</span></div>";
-    if (contentLines.length > 60) html += '<div class="diff-hunk">... ' + (contentLines.length - 60) + " lines hidden</div>";
-    return html;
-  }
-
-  return null;
-}
-
 function buildToolDetailHtml(toolId, params) {
-  const diffHtml = renderDiffHtml(toolId, params);
-  if (diffHtml) return diffHtml;
-  let text = "";
-  switch (toolId) {
-    case "execute_command": text = "> " + (params.command || params.cmd || ""); break;
-    default: text = params.path || params.pattern || params.url || JSON.stringify(params);
-  }
-  return '<div class="diff-line diff-context"><span class="diff-num"></span><span class="diff-num"></span><span class="diff-sign"> </span><span>' + escapeHtml(text) + "</span></div>";
+  return renderToolApproval(toolId, params, { shortenPath: shortPath, mode: preferredDiffView });
 }
 
 function stopCountdown() {
@@ -3461,61 +3442,29 @@ function applyEditToParams() {
   apprEdit.style.display = "none";
 }
 
-function buildToolSummary(toolId, result) {
-  switch (toolId) {
-    case "read_file": return String(result.content || "").slice(0, 2000);
-    case "list_dir": return (result.entries || []).map((e) => (e.is_dir ? e.name + "/" : e.name)).join(", ").slice(0, 1000);
-    case "search_code": return (result.matches || []).map((m) => m.file + ":" + m.line + " " + m.text).join("\n").slice(0, 1500);
-    case "glob_files": return (result.files || []).join("\n").slice(0, 1000) || "(no matches)";
-    case "web_fetch": return String(result.content || "").slice(0, 2000);
-    case "analyze_codebase": {
-      if (result.tree) return (result.tree || []).join("\n").slice(0, 1500);
-      return (result.matches || []).map((m) => m.file + ":" + m.line + " " + m.text).join("\n").slice(0, 1500);
-    }
-    case "browser_automation":
-    case "github_action":
-    case "apply_diff":
-    case "create_dir":
-    case "manage_memory":
-      return result.message || "completed";
-    case "manage_background_process": return JSON.stringify(result).slice(0, 800);
-    case "spawn_sub_agent": return String(result.sub_agent_reply || "").slice(0, 2000);
-    case "execute_command": {
-      let s = "";
-      if (result.stdout) s += String(result.stdout).slice(0, 1500);
-      if (result.stderr) s += "\nSTDERR: " + String(result.stderr).slice(0, 500);
-      if (result.exit_code !== 0) s += "\nexit code: " + result.exit_code;
-      return s || "(no output)";
-    }
-    default: return result.message || "completed";
-  }
-}
-
-function pathShort(p) {
-  const home = (configCache && configCache.home) || "";
-  return String(p || "");
-}
-
-async function executeTool(toolId, params, approved) {
+async function executeTool(toolId, params, approved, activity, transcriptActivity, call) {
   const started = Date.now();
-  const isCmd = toolId === "execute_command";
-  const cmdStr = params.command || params.cmd || "";
-  const target = params.path || params.url || params.pattern || "";
 
   const activePath = toolWorkingPath(toolId, params);
   if (activePath) updatePath(activePath);
 
-  const shortTarget = shortPath(target);
-  const displayTarget = isCmd ? cmdStr.slice(0, 60) : shortTarget.slice(0, 60);
+  const displayTarget = toolTarget(toolId, params, shortPath);
   const label = toolId + "  " + displayTarget;
-  const item = logItem(label, { time: "", status: "run", toolName: toolId, target: displayTarget });
+  const item = logItem(label, {
+    activity,
+    params,
+    time: "",
+    status: "run",
+    toolName: toolId,
+    target: displayTarget,
+  });
 
   try {
     const result = await invoke("execute_approved_tool", { config: configCache, toolId, params, approved });
-    const elapsed = ((Date.now() - started) / 1000).toFixed(1);
-    item.setTime(elapsed + "s");
+    const durationMs = Date.now() - started;
+    item.setTime((durationMs / 1000).toFixed(1) + "s");
 
-    const failed = result.exit_code !== 0 && !result.message && !result.content && !result.entries && !result.matches && !result.files && !result.sub_agent_reply;
+    const failed = toolFailed(result);
     if (failed) {
       item.setStatus("err");
       item.lbl.classList.add("err");
@@ -3523,92 +3472,50 @@ async function executeTool(toolId, params, approved) {
       item.setStatus("ok");
     }
 
-    let summary = null;
-    if (toolId === "write_file") {
-      const n = String(params.content || "").split("\n").length;
-      summary = "files: 1 · +" + n;
-    } else if (toolId === "edit_file") {
-      const oldN = String(params.old_string || params.old || "").split("\n").length;
-      const newN = String(params.new_string || params.new || "").split("\n").length;
-      summary = "files: 1 · +" + newN + " -" + oldN;
-    } else if (toolId === "apply_diff") {
-      const { add, del } = parseUnifiedDiff(params.diff_content);
-      summary = "files: 1 · +" + add + " -" + del;
-    } else if (toolId === "delete_file") {
-      summary = "files: 1 · -1";
-    }
-
-    let bodyParts = [];
-    if (summary) bodyParts.push('[summary] ' + summary);
-    if (isCmd) {
-      const stdoutLines = String(result.stdout || "").split("\n").filter((l) => l.trim());
-      const stderrLines = String(result.stderr || "").split("\n").filter((l) => l.trim());
-      const all = stdoutLines.length + stderrLines.length;
-      let shownOut = stdoutLines, shownErr = stderrLines, hidden = 0;
-      if (all > 60) { hidden = all - 60; shownOut = stdoutLines.slice(0, 45); shownErr = stderrLines.slice(0, 15); }
-      bodyParts.push(shownOut.join("\n"));
-      if (shownErr.length) bodyParts.push('[stderr]\n' + shownErr.join("\n"));
-      if (hidden > 0) bodyParts.push('... ' + hidden + " lines hidden");
-      if (result.exit_code !== 0) bodyParts.push('[exit] ' + result.exit_code);
-    } else if (toolId === "list_dir") {
-      const entries = result.entries || [];
-      let gridHtml = '<div class="dir-grid">';
-      if (entries.length === 0) gridHtml = '<div class="log-item-body-content">(bo?)</div>';
-      for (const e of entries.slice(0, 120)) {
-        gridHtml += e.is_dir
-          ? '<span class="dir">' + escapeHtml(e.name) + "/</span>"
-          : '<span class="file">' + escapeHtml(e.name) + "</span>";
-      }
-      gridHtml += "</div>";
-      item.body.innerHTML = gridHtml;
-    } else if (toolId === "read_file") {
-      const lines = String(result.content || "").split("\n");
-      const numbered = lines.slice(0, 80).map((l, i) => String(i + 1).padStart(4, " ") + " | " + l).join("\n");
-      bodyParts.push(numbered);
-      if (lines.length > 80) bodyParts.push('... ' + (lines.length - 80) + " more lines");
-    } else if (toolId === "search_code" || toolId === "analyze_codebase") {
-      const matches = result.matches || [];
-      bodyParts.push(matches.slice(0, 40).map((m) => String(m.file).split(/[\\/]/).pop() + ":" + m.line + "  " + m.text).join("\n") || "(no matches)");
-    } else if (toolId === "web_fetch") {
-      bodyParts.push(String(result.content || "").slice(0, 4000));
-    } else if (toolId === "glob_files") {
-      bodyParts.push((result.files || []).join("\n"));
-    } else {
-      if (result.message) bodyParts.push(result.message);
-    }
-
-    if (toolId === "write_file" || toolId === "edit_file" || toolId === "apply_diff") {
-      item.body.innerHTML = renderDiffHtml(toolId, params);
-    } else if (toolId === "list_dir") {
-    } else {
-      item.body.textContent = bodyParts.join("\n\n");
-    }
+    const presentation = renderToolResult(toolId, params, result, { shortenPath: shortPath, mode: preferredDiffView });
+    applyToolPresentation(item, presentation);
+    const summary = toolId === "delete_file" ? "files: 1 · -1" : presentation.summary || toolSummary(toolId, result);
+    addActivityTool(transcriptActivity, call || { name: toolId, arguments: params }, result, {
+      toolId,
+      summary,
+      status: failed ? "err" : "ok",
+      durationMs,
+      order: call?.transcriptOrder,
+    });
     autoScroll();
-    return buildToolSummary(toolId, result);
+    return summary;
   } catch (e) {
-    const elapsed = ((Date.now() - started) / 1000).toFixed(1);
-    item.setTime(elapsed + "s");
+    const durationMs = Date.now() - started;
+    item.setTime((durationMs / 1000).toFixed(1) + "s");
     item.setStatus("err");
     item.lbl.classList.add("err");
     item.body.textContent = String(e);
+    item.revealOutput();
+    addActivityTool(transcriptActivity, call || { name: toolId, arguments: params }, { message: String(e) }, {
+      toolId,
+      summary: `ERROR: ${e}`,
+      status: "err",
+      durationMs,
+      order: call?.transcriptOrder,
+    });
     autoScroll();
     return "ERROR: " + e;
   }
 }
 
-async function processToolItem(call) {
+async function processToolItem(call, activity, transcriptActivity) {
   const toolId = call.name;
   const params = (call.arguments && typeof call.arguments === "object") ? call.arguments : {};
   const risk = TOOL_RISKS[toolId] || "medium";
 
   if (configCache && configCache.mode === "autonomous") {
-    return await executeTool(toolId, params, true);
+    return await executeTool(toolId, params, true, activity, transcriptActivity, call);
   }
   if (sessionAllow[toolId]) {
-    return await executeTool(toolId, params, true);
+    return await executeTool(toolId, params, true, activity, transcriptActivity, call);
   }
   if (configCache && configCache.allowList && configCache.allowList.includes(allowKey(toolId, params))) {
-    return await executeTool(toolId, params, true);
+    return await executeTool(toolId, params, true, activity, transcriptActivity, call);
   }
 
   let check;
@@ -3624,7 +3531,7 @@ async function processToolItem(call) {
     return "BLOCKED: " + check.reason;
   }
   if (check.decision === "allow") {
-    return await executeTool(toolId, params, true);
+    return await executeTool(toolId, params, true, activity, transcriptActivity, call);
   }
 
   const decision = await showApproval(toolId, params, check.risk || risk);
@@ -3632,7 +3539,7 @@ async function processToolItem(call) {
     renderAlert("Denied: " + toolId);
     return "DENIED BY USER";
   }
-  return await executeTool(toolId, params, true);
+  return await executeTool(toolId, params, true, activity, transcriptActivity, call);
 }
 
 async function sendChat(message) {
@@ -3643,6 +3550,28 @@ async function sendChat(message) {
   }
   cmdInput.readOnly = true;
   setAgentState("working");
+  const activityStartedAt = performance.now();
+  const activityStartedWallTime = Date.now();
+  let responseActivity = null;
+  let responseActivityRecord = null;
+  let responseActivityFinished = false;
+  const ensureResponseActivity = () => {
+    if (!responseActivity) {
+      responseActivity = createLogActivity({ startedAt: activityStartedAt });
+      responseActivityRecord = createActivityTranscript(sessionTranscript, activityStartedWallTime);
+    }
+    return responseActivity;
+  };
+  const finishResponseActivity = (state = "ok") => {
+    if (!responseActivity || responseActivityFinished) return;
+    const durationMs = performance.now() - activityStartedAt;
+    responseActivity.finish(state, durationMs);
+    if (responseActivityRecord) {
+      responseActivityRecord.status = state === "err" ? "err" : "ok";
+      responseActivityRecord.durationMs = Math.round(durationMs);
+    }
+    responseActivityFinished = true;
+  };
   try {
     const config = await invoke("get_config");
     if (!config) {
@@ -3658,6 +3587,7 @@ async function sendChat(message) {
 
     await ensureSession(message);
     conversationHistory.push({ role: "user", content: message });
+    appendTranscriptEntry(sessionTranscript, createTranscriptEntry("user", { text: message }));
     await checkpointSession(null, "active");
     const maxTurns = 12;
 
@@ -3678,6 +3608,10 @@ async function sendChat(message) {
       lastStreamSequence = 0;
       activeStreamRenderer = null;
       let streamedReasoning = "";
+      let thinkingEntry = null;
+      const reasoningRenderScheduler = createFrameCoalescer(() => {
+        if (thinkingEntry) thinkingEntry.setText(stripEmojis(replacePaths(streamedReasoning)));
+      });
       const providerRequestStartedAt = performance.now();
       let providerElapsedMs = null;
       const onEvent = new TauriChannel();
@@ -3698,6 +3632,8 @@ async function sendChat(message) {
           });
         } else if (event === "reasoningDelta") {
           streamedReasoning += String(data.delta || "");
+          if (!thinkingEntry) thinkingEntry = ensureResponseActivity().addThinking();
+          reasoningRenderScheduler.schedule();
         } else if (event === "completed") {
           providerElapsedMs = Number(data.elapsedMs || 0);
         }
@@ -3723,6 +3659,7 @@ async function sendChat(message) {
           startedAt: Date.now(),
         } : null, "interrupted");
         if (!cancelled) throw error;
+        finishResponseActivity("err");
         logLine("Response stopped", "sys");
         break;
       } finally {
@@ -3744,7 +3681,20 @@ async function sendChat(message) {
 
       const text = String(reply.text || "");
       const toolCalls = reply.tool_calls || [];
+      const reasoningText = String(reply.reasoning || streamedReasoning || "").trim();
+      reasoningRenderScheduler.cancel();
       let progressEl = null;
+
+      if (reasoningText || (text.trim() && toolCalls.length > 0)) {
+        ensureResponseActivity();
+        addActivityThinking(responseActivityRecord, reasoningText, toolCalls.length > 0 ? text : "");
+      }
+
+      if (reasoningText) {
+        if (!thinkingEntry) thinkingEntry = ensureResponseActivity().addThinking();
+        mountMarkdown(thinkingEntry.body, stripEmojis(replacePaths(reasoningText)));
+        thinkingEntry.setComplete();
+      }
 
       if (activeStreamRenderer) {
         progressEl = await activeStreamRenderer.finish(toolCalls.length > 0 ? "step" : "final");
@@ -3755,6 +3705,20 @@ async function sendChat(message) {
         gap.className = "final-gap";
         appendLogElement(gap);
         await animatedRichMessage(text, "assistant-response");
+      }
+
+      if (toolCalls.length > 0 && progressEl) {
+        if (!thinkingEntry) thinkingEntry = ensureResponseActivity().addThinking();
+        if (!reasoningText) thinkingEntry.body.replaceChildren();
+        else {
+          const divider = document.createElement("div");
+          divider.className = "activity-thinking-divider";
+          divider.setAttribute("aria-hidden", "true");
+          thinkingEntry.body.appendChild(divider);
+        }
+        progressEl.classList.add("activity-thinking-message");
+        thinkingEntry.body.appendChild(progressEl);
+        thinkingEntry.setComplete();
       }
 
       if (text.trim() || toolCalls.length > 0) {
@@ -3774,18 +3738,25 @@ async function sendChat(message) {
       }
 
       if (toolCalls.length === 0) {
+        if (text.trim()) appendTranscriptEntry(sessionTranscript, createTranscriptEntry("assistant", { text }));
+        finishResponseActivity("ok");
         void generateSmartSessionTitle(message, text);
         break;
       }
+
+      const activity = ensureResponseActivity();
+
+      const toolOrderBase = responseActivityRecord?.tools?.length || 0;
+      const orderedCalls = toolCalls.map((call, index) => ({ ...call, transcriptOrder: toolOrderBase + index }));
 
       const canParallelizeReads = toolCalls.length > 1
         && configCache?.mode !== "strict"
         && toolCalls.every((call) => TOOL_RISKS[call.name] === "low");
       const rawResults = canParallelizeReads
-        ? await Promise.all(toolCalls.map((call) => processToolItem(call)))
+        ? await Promise.all(orderedCalls.map((call) => processToolItem(call, activity, responseActivityRecord)))
         : await (async () => {
             const ordered = [];
-            for (const call of toolCalls) ordered.push(await processToolItem(call));
+            for (const call of orderedCalls) ordered.push(await processToolItem(call, activity, responseActivityRecord));
             return ordered;
           })();
       const results = rawResults.map((result, index) =>
@@ -3798,12 +3769,15 @@ async function sendChat(message) {
       }
       await checkpointSession(null, "active");
     }
+    finishResponseActivity("ok");
     if (currentSession?.status !== "interrupted") await checkpointSession(null, "complete");
   } catch (e) {
+    finishResponseActivity("err");
     if (isNetworkFailure(e)) setConnectionOnline(false);
     renderAlert("Error: " + e);
   } finally {
     if (checkpointTimer) { clearTimeout(checkpointTimer); checkpointTimer = null; }
+    finishResponseActivity("ok");
     activeRequestId = null;
     activeStreamRenderer = null;
     cmdInput.readOnly = false;
@@ -3912,7 +3886,7 @@ async function runCommand(cmd) {
         break;
 
       case "clear":
-        logEl.innerHTML = "";
+        transcriptVirtualizer.clear();
         break;
 
       default:

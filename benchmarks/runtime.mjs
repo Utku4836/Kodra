@@ -5,6 +5,7 @@ import {
   createFrameCoalescer,
 } from "../src/performance-runtime.js";
 import { createMotionRuntime, createSelectionController } from "../src/ui-motion.js";
+import { createTranscriptVirtualizer } from "../src/transcript-virtualizer.js";
 
 function percentile(samples, ratio) {
   const sorted = [...samples].sort((a, b) => a - b);
@@ -80,9 +81,57 @@ function measureMenuRetargeting(items = 500, moves = 100) {
   };
 }
 
+function measureTranscriptVirtualization(items = 1000) {
+  const dom = new JSDOM("<!doctype html><body><main id='scroll'><div id='log'></div></main></body>");
+  const scroll = dom.window.document.getElementById("scroll");
+  const log = dom.window.document.getElementById("log");
+  Object.defineProperty(scroll, "clientHeight", { value: 720 });
+  log.getBoundingClientRect = () => ({ top: 0, bottom: items * 72, height: items * 72 });
+  for (let index = 0; index < items; index += 1) {
+    const row = dom.window.document.createElement("div");
+    row.getBoundingClientRect = () => ({ top: index * 72, bottom: index * 72 + 56, height: 56 });
+    log.appendChild(row);
+  }
+  const queue = [];
+  const virtualizer = createTranscriptVirtualizer({
+    container: log,
+    scrollRoot: scroll,
+    threshold: 80,
+    maxOperationsPerFrame: 6,
+    requestFrame: (callback) => { queue.push(callback); return queue.length; },
+  });
+  const start = performance.now();
+  virtualizer.capture();
+  const initialFrames = [];
+  while (queue.length) {
+    const frameStart = performance.now();
+    queue.shift()();
+    initialFrames.push(performance.now() - frameStart);
+  }
+  const initialMs = performance.now() - start;
+  scroll.scrollTop = 30_000;
+  virtualizer.schedule();
+  const scrollFrames = [];
+  while (queue.length) {
+    const frameStart = performance.now();
+    queue.shift()();
+    scrollFrames.push(performance.now() - frameStart);
+  }
+  const result = {
+    items,
+    mounted: virtualizer.mountedCount,
+    initialMs: Number(initialMs.toFixed(2)),
+    initialMaxFrameMs: Number(Math.max(...initialFrames).toFixed(3)),
+    cachedScrollMaxFrameMs: Number(Math.max(...scrollFrames).toFixed(3)),
+  };
+  dom.window.close();
+  return result;
+}
+
 console.log(JSON.stringify({
   environment: "jsdom-structural (GPU/FPS ölçümü değildir)",
   longSessionMount: measureLongSessionMount(),
   eventCoalescing: measureEventCoalescing(),
   menuRetargeting: measureMenuRetargeting(),
+  transcriptVirtualization: measureTranscriptVirtualization(),
 }, null, 2));

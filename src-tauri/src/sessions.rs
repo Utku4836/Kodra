@@ -7,8 +7,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 const MAX_MESSAGES: usize = 1_000;
+const MAX_TRANSCRIPT_ENTRIES: usize = 5_000;
 const MAX_BYTES: usize = 8 * 1024 * 1024;
 static SESSION_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -114,6 +115,8 @@ pub(crate) struct SessionRecord {
     #[serde(default)]
     pub(crate) messages: Vec<Value>,
     #[serde(default)]
+    pub(crate) transcript: Vec<Value>,
+    #[serde(default)]
     pub(crate) draft: Option<Value>,
 }
 
@@ -212,6 +215,9 @@ fn validate(record: &SessionRecord) -> Result<(), String> {
     if record.messages.len() > MAX_MESSAGES {
         return Err("Session exceeds the message limit".to_string());
     }
+    if record.transcript.len() > MAX_TRANSCRIPT_ENTRIES {
+        return Err("Session transcript exceeds the entry limit".to_string());
+    }
     if !(0.5..=0.95).contains(&record.compaction.threshold) {
         return Err("Invalid auto-compact threshold".to_string());
     }
@@ -222,6 +228,7 @@ fn validate(record: &SessionRecord) -> Result<(), String> {
         return Err("Compaction summary exceeds the size limit".to_string());
     }
     if record.messages.iter().any(contains_secret_key)
+        || record.transcript.iter().any(contains_secret_key)
         || record.draft.as_ref().is_some_and(contains_secret_key)
     {
         return Err("Session data cannot contain secret-key fields".to_string());
@@ -266,7 +273,22 @@ fn read_record(path: &Path) -> Result<SessionRecord, String> {
     if bytes.len() > MAX_BYTES {
         return Err("Session file exceeds the size limit".to_string());
     }
-    let record: SessionRecord = serde_json::from_slice(&bytes)
+    let mut value: Value = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("Session JSON is corrupted: {error}"))?;
+    let version = value
+        .get("schemaVersion")
+        .and_then(Value::as_u64)
+        .unwrap_or(1);
+    if version == 1 {
+        let object = value
+            .as_object_mut()
+            .ok_or_else(|| "Session JSON must be an object".to_string())?;
+        object.insert("schemaVersion".to_string(), Value::from(SCHEMA_VERSION));
+        object
+            .entry("transcript".to_string())
+            .or_insert_with(|| Value::Array(Vec::new()));
+    }
+    let record: SessionRecord = serde_json::from_value(value)
         .map_err(|error| format!("Session JSON is corrupted: {error}"))?;
     validate(&record)?;
     Ok(record)
@@ -297,6 +319,7 @@ pub(crate) fn create(
         usage: SessionUsage::default(),
         compaction: CompactionState::default(),
         messages: Vec::new(),
+        transcript: Vec::new(),
         draft: None,
     };
     save(app, record.clone())?;
@@ -427,6 +450,7 @@ mod tests {
             usage: SessionUsage::default(),
             compaction: CompactionState::default(),
             messages: vec![serde_json::json!({"role":"user","content":"merhaba"})],
+            transcript: vec![serde_json::json!({"type":"user","text":"merhaba"})],
             draft: None,
         };
         let bytes = serde_json::to_vec_pretty(&record).unwrap();
@@ -453,9 +477,41 @@ mod tests {
             "status": "complete",
             "messages": []
         });
-        let record: SessionRecord = serde_json::from_value(value).unwrap();
+        let mut migrated = value;
+        migrated["schemaVersion"] = Value::from(SCHEMA_VERSION);
+        migrated["transcript"] = Value::Array(Vec::new());
+        let record: SessionRecord = serde_json::from_value(migrated).unwrap();
         assert_eq!(record.usage.total_tokens, 0);
         assert!(record.compaction.auto_enabled);
         assert_eq!(record.compaction.threshold, 0.8);
+    }
+
+    #[test]
+    fn schema_v1_file_is_migrated_to_structured_transcript_schema() {
+        let root = std::env::temp_dir().join(format!(
+            "kodra-session-migration-test-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("s-legacy.json");
+        let bytes = serde_json::to_vec_pretty(&serde_json::json!({
+            "schemaVersion": 1,
+            "id": "s-legacy",
+            "title": "Legacy",
+            "provider": "gemini",
+            "model": "gemini-test",
+            "workspace": "C:\\work",
+            "createdAt": 1,
+            "updatedAt": 2,
+            "status": "complete",
+            "messages": [{"role":"user","content":"hello"}]
+        }))
+        .unwrap();
+        fs::write(&path, bytes).unwrap();
+        let record = read_record(&path).unwrap();
+        assert_eq!(record.schema_version, SCHEMA_VERSION);
+        assert!(record.transcript.is_empty());
+        fs::remove_dir_all(root).unwrap();
     }
 }

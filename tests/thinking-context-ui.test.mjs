@@ -31,7 +31,7 @@ test("index.html contains the minimal thinking trigger, shared selection menu, s
   const ctxStatus = doc.getElementById("ctx-status");
   assert.ok(ctxStatus, "ctx-status exists");
   assert.ok(doc.getElementById("ctx-gauge-fill"), "ctx-gauge-fill circle exists");
-  assert.ok(doc.getElementById("ctx-pct"), "ctx-pct span exists");
+  assert.equal(doc.getElementById("ctx-pct"), null, "context remains a number-free ring");
 });
 
 test("context gauge calculations produce smooth offsets and threshold states", () => {

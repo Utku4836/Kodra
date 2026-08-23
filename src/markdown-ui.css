@@ -274,3 +274,15 @@
   html:not([data-motion-preference="full"]) .md-path,
   html:not([data-motion-preference="full"]) .md-external-link { transition-duration: 0.01ms !important; }
 }
+
+/* Activity reasoning is supporting context, not the primary assistant answer. */
+.activity-thinking-content.rich-message,
+.activity-thinking-message.rich-message {
+  color: rgba(214, 217, 221, 0.84);
+  font-size: 12.25px;
+  font-weight: 450;
+  line-height: 1.62;
+}
+
+.activity-thinking-content.rich-message p,
+.activity-thinking-message.rich-message p { margin-bottom: 7px; }

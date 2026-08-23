@@ -1085,7 +1085,182 @@ fn native_tools() -> &'static serde_json::Value {
 
 /// Her turda tüm opsiyonel araç şemalarını prompta koymak yerine, temel kodlama
 /// araçlarını sabit tutar ve yalnızca açıkça istenen uzak yetenekleri ekler.
-fn native_tools_for(messages: &[NativeMessage]) -> serde_json::Value {
+fn last_user_request(messages: &[NativeMessage]) -> String {
+    messages
+        .iter()
+        .rev()
+        .find(|message| message.role == "user")
+        .and_then(|message| message.content.as_deref())
+        .unwrap_or_default()
+        .to_lowercase()
+}
+
+fn request_mentions(request: &str, words: &[&str]) -> bool {
+    words.iter().any(|word| request.contains(word))
+}
+
+/// Groq's free tier has a tight per-minute token budget. Sending the complete
+/// tool library on conversational turns wastes most of it before generation
+/// starts, so route only the tools that match the current user intent.
+fn groq_tool_names(messages: &[NativeMessage]) -> Vec<&'static str> {
+    let request = last_user_request(messages);
+    let mut selected = Vec::new();
+    let mut add = |names: &[&'static str]| {
+        for name in names {
+            if selected.len() >= 5 {
+                break;
+            }
+            if !selected.contains(name) {
+                selected.push(*name);
+            }
+        }
+    };
+
+    let web = request_mentions(
+        &request,
+        &[
+            "web",
+            "internet",
+            "site",
+            "url",
+            "http",
+            "araştır",
+            "güncel",
+            "browse",
+        ],
+    );
+    let github = request_mentions(
+        &request,
+        &[
+            "github",
+            "git ",
+            "commit",
+            "push",
+            "pull request",
+            "repo",
+            "issue",
+        ],
+    );
+    let memory = request_mentions(&request, &["hafıza", "memory", "hatırla"]);
+    let delegation = request_mentions(
+        &request,
+        &[
+            "alt ajan",
+            "sub-agent",
+            "sub agent",
+            "delege",
+            "paralel ajan",
+        ],
+    );
+    let command = request_mentions(
+        &request,
+        &[
+            "komut",
+            "command",
+            "terminal",
+            "çalıştır",
+            "run ",
+            "build",
+            "test",
+            "npm",
+            "cargo",
+        ],
+    );
+    let process = request_mentions(
+        &request,
+        &[
+            "server",
+            "sunucu",
+            "process",
+            "süreç",
+            "background",
+            "arka plan",
+        ],
+    );
+    let delete = request_mentions(&request, &["sil", "delete", "remove", "kaldır"]);
+    let create = request_mentions(
+        &request,
+        &[
+            "oluştur",
+            "yarat",
+            "create",
+            "new file",
+            "yeni dosya",
+            "klasör aç",
+        ],
+    );
+    let edit = request_mentions(
+        &request,
+        &[
+            "kod",
+            "code",
+            "düzelt",
+            "fix",
+            "değiştir",
+            "edit",
+            "uygula",
+            "implement",
+            "refactor",
+            "tasarım",
+            "ui",
+            "uygulama",
+            "app",
+            "proje",
+            "project",
+        ],
+    );
+    let inspect = request_mentions(
+        &request,
+        &[
+            "dosya", "file", "klasör", "folder", "oku", "read", "liste", "list", "ara ", "search",
+            "incele", "bak ", "analyze", "masaüst", "desktop", "path",
+        ],
+    );
+
+    if web {
+        add(&["web_fetch", "browser_automation"]);
+    }
+    if github {
+        add(&["github_action", "execute_command", "read_file"]);
+    }
+    if memory {
+        add(&["manage_memory"]);
+    }
+    if delegation {
+        add(&["spawn_sub_agent"]);
+    }
+    if delete {
+        add(&["list_dir", "delete_file"]);
+    } else if create {
+        add(&["list_dir", "read_file", "write_file", "create_dir"]);
+    } else if edit {
+        add(&[
+            "read_file",
+            "search_code",
+            "edit_file",
+            "execute_command",
+            "list_dir",
+        ]);
+    } else if inspect {
+        add(&[
+            "read_file",
+            "list_dir",
+            "search_code",
+            "glob_files",
+            "analyze_codebase",
+        ]);
+    }
+    if command {
+        add(&["execute_command", "read_file"]);
+    }
+    if process {
+        add(&["manage_background_process", "execute_command"]);
+    }
+
+    selected
+}
+
+fn native_tools_for(provider: &str, messages: &[NativeMessage]) -> serde_json::Value {
     const CORE_TOOLS: &[&str] = &[
         "read_file",
         "list_dir",
@@ -1100,18 +1275,13 @@ fn native_tools_for(messages: &[NativeMessage]) -> serde_json::Value {
         "manage_background_process",
         "analyze_codebase",
     ];
-    let request = messages
-        .iter()
-        .rev()
-        .find(|message| message.role == "user")
-        .and_then(|message| message.content.as_deref())
-        .unwrap_or_default()
-        .to_lowercase();
-    let mut selected = CORE_TOOLS
-        .iter()
-        .copied()
-        .collect::<std::collections::HashSet<_>>();
-    let mentions = |words: &[&str]| words.iter().any(|word| request.contains(word));
+    let request = last_user_request(messages);
+    let mut selected: std::collections::HashSet<&str> = if provider == "groq" {
+        groq_tool_names(messages).into_iter().collect()
+    } else {
+        CORE_TOOLS.iter().copied().collect()
+    };
+    let mentions = |words: &[&str]| request_mentions(&request, words);
 
     if mentions(&[
         "web",
@@ -1153,6 +1323,24 @@ fn native_tools_for(messages: &[NativeMessage]) -> serde_json::Value {
             .cloned()
             .collect(),
     )
+}
+
+fn effective_max_output_tokens(provider: &str, configured: Option<u64>) -> u64 {
+    let requested = configured.unwrap_or(4096).clamp(256, 16384);
+    if provider == "groq" {
+        // Leaves enough of the common 8K TPM free-tier bucket for prompt tokens
+        // and a second interactive turn instead of reserving 4K+ every request.
+        requested.min(1536)
+    } else {
+        requested
+    }
+}
+
+fn attach_openai_tools(payload: &mut serde_json::Value, tools: serde_json::Value) {
+    if tools.as_array().is_some_and(|items| !items.is_empty()) {
+        payload["tools"] = tools;
+        payload["tool_choice"] = serde_json::json!("auto");
+    }
 }
 
 /// LLM chat isteği — provider'a göre uygun API'ye gönderir
@@ -1545,20 +1733,50 @@ fn apply_thinking_params(
                 serde_json::json!({ "thinkingBudget": budget });
         }
         providers::ProviderProtocol::OpenAiChat => {
-            let effort = match mode.as_str() {
-                "deep" => "high",
-                "balanced" => "medium",
-                "fast" => "low",
-                other => other,
-            };
-            if !matches!(effort, "off" | "standard" | "disabled")
-                && (provider == "openai"
-                    || provider == "openrouter"
-                    || provider == "together"
-                    || provider == "groq"
-                    || provider == "deepseek")
-            {
-                payload["reasoning_effort"] = serde_json::json!(effort);
+            if provider == "groq" {
+                let model = config.model.to_ascii_lowercase();
+                let effort = if model.contains("qwen3") {
+                    Some(
+                        if matches!(mode.as_str(), "off" | "none" | "disabled" | "standard") {
+                            "none"
+                        } else {
+                            "default"
+                        },
+                    )
+                } else if model.contains("gpt-oss") {
+                    Some(match mode.as_str() {
+                        "deep" | "high" | "xhigh" => "high",
+                        "balanced" | "medium" => "medium",
+                        _ => "low",
+                    })
+                } else {
+                    None
+                };
+                if let Some(effort) = effort {
+                    payload["reasoning_effort"] = serde_json::json!(effort);
+                    let has_tools = payload
+                        .get("tools")
+                        .and_then(serde_json::Value::as_array)
+                        .is_some_and(|tools| !tools.is_empty());
+                    if has_tools && effort != "none" {
+                        payload["reasoning_format"] = serde_json::json!("parsed");
+                    }
+                }
+            } else {
+                let effort = match mode.as_str() {
+                    "deep" => "high",
+                    "balanced" => "medium",
+                    "fast" => "low",
+                    other => other,
+                };
+                if !matches!(effort, "off" | "standard" | "disabled")
+                    && (provider == "openai"
+                        || provider == "openrouter"
+                        || provider == "together"
+                        || provider == "deepseek")
+                {
+                    payload["reasoning_effort"] = serde_json::json!(effort);
+                }
             }
         }
     }
@@ -1570,7 +1788,7 @@ fn chat_blocking(config: &AppConfig, messages: &[NativeMessage]) -> Result<ChatR
     let protocol = providers::effective_protocol(provider, config.protocol.as_deref());
     let timeout = request_timeout(config, 45);
     let secret = resolve_secret(config)?;
-    let tools = native_tools_for(messages);
+    let tools = native_tools_for(provider, messages);
 
     // System promptunu ayır (provider'a göre ayrı alana gider)
     let system_text: String = messages
@@ -1585,7 +1803,7 @@ fn chat_blocking(config: &AppConfig, messages: &[NativeMessage]) -> Result<ChatR
         .cloned()
         .collect();
 
-    let max_out = config.max_output_tokens.unwrap_or(4096).clamp(256, 16384);
+    let max_out = effective_max_output_tokens(provider, config.max_output_tokens);
     let mut payload = match protocol {
         providers::ProviderProtocol::AnthropicMessages => serde_json::json!({
             "model": config.model,
@@ -1611,14 +1829,15 @@ fn chat_blocking(config: &AppConfig, messages: &[NativeMessage]) -> Result<ChatR
         providers::ProviderProtocol::OpenAiChat => {
             let mut p = serde_json::json!({
                 "model": config.model,
-                "tools": tools,
-                "tool_choice": "auto",
                 // OpenAI-uyumlular: system dahil bütün mesajlar gönderilir.
                 "messages": openai_messages(provider, messages)
             });
-            if provider == "openai" {
+            attach_openai_tools(&mut p, tools);
+            if provider == "openai" || provider == "groq" {
                 p["max_completion_tokens"] = serde_json::json!(max_out);
-                p["store"] = serde_json::json!(false);
+                if provider == "openai" {
+                    p["store"] = serde_json::json!(false);
+                }
             } else {
                 p["max_tokens"] = serde_json::json!(max_out);
             }
@@ -1971,7 +2190,7 @@ async fn generate_session_title(
 fn stream_body(config: &AppConfig, messages: &[NativeMessage]) -> String {
     let provider = config.provider.as_str();
     let protocol = providers::effective_protocol(provider, config.protocol.as_deref());
-    let tools = native_tools_for(messages);
+    let tools = native_tools_for(provider, messages);
     let system_text = messages
         .iter()
         .filter(|message| message.role == "system")
@@ -1983,7 +2202,7 @@ fn stream_body(config: &AppConfig, messages: &[NativeMessage]) -> String {
         .filter(|message| message.role != "system")
         .cloned()
         .collect::<Vec<_>>();
-    let max_out = config.max_output_tokens.unwrap_or(4096).clamp(256, 16384);
+    let max_out = effective_max_output_tokens(provider, config.max_output_tokens);
     let mut payload = match protocol {
         providers::ProviderProtocol::AnthropicMessages => serde_json::json!({
             "model": config.model,
@@ -2011,14 +2230,15 @@ fn stream_body(config: &AppConfig, messages: &[NativeMessage]) -> String {
             let mut p = serde_json::json!({
                 "model": config.model,
                 "stream": true,
-                "tools": tools,
-                "tool_choice": "auto",
                 "messages": openai_messages(provider, messages)
             });
-            if provider == "openai" {
+            attach_openai_tools(&mut p, tools);
+            if provider == "openai" || provider == "groq" {
                 p["max_completion_tokens"] = serde_json::json!(max_out);
-                p["store"] = serde_json::json!(false);
-                p["stream_options"] = serde_json::json!({"include_usage": true});
+                if provider == "openai" {
+                    p["store"] = serde_json::json!(false);
+                    p["stream_options"] = serde_json::json!({"include_usage": true});
+                }
             } else {
                 p["max_tokens"] = serde_json::json!(max_out);
             }
@@ -3513,19 +3733,56 @@ mod performance_tests {
 
     #[test]
     fn optional_remote_tools_only_join_relevant_requests() {
-        let local = native_tools_for(&[user_message("src klasöründeki hatayı düzelt")]);
+        let local = native_tools_for("openai", &[user_message("src klasöründeki hatayı düzelt")]);
         let local_names = tool_names(&local);
         assert!(local_names.contains(&"read_file"));
         assert!(!local_names.contains(&"web_fetch"));
         assert!(!local_names.contains(&"github_action"));
 
-        let remote = native_tools_for(&[user_message(
-            "internetten güncel bilgiyi araştır ve github repoya commit hazırla",
-        )]);
+        let remote = native_tools_for(
+            "openai",
+            &[user_message(
+                "internetten güncel bilgiyi araştır ve github repoya commit hazırla",
+            )],
+        );
         let remote_names = tool_names(&remote);
         assert!(remote_names.contains(&"web_fetch"));
         assert!(remote_names.contains(&"browser_automation"));
         assert!(remote_names.contains(&"github_action"));
+    }
+
+    #[test]
+    fn groq_omits_tools_for_conversation_and_routes_small_task_sets() {
+        let casual = native_tools_for("groq", &[user_message("Ayak?")]);
+        assert!(tool_names(&casual).is_empty());
+
+        let coding = native_tools_for(
+            "groq",
+            &[user_message("Uygulamadaki kod hatasını bul ve düzelt")],
+        );
+        let coding_names = tool_names(&coding);
+        assert!((3..=5).contains(&coding_names.len()));
+        assert!(coding_names.contains(&"read_file"));
+        assert!(coding_names.contains(&"edit_file"));
+        assert!(!coding_names.contains(&"delete_file"));
+
+        let destructive = native_tools_for(
+            "groq",
+            &[user_message("Masaüstündeki deneme.txt dosyasını sil")],
+        );
+        assert!(tool_names(&destructive).contains(&"delete_file"));
+    }
+
+    #[test]
+    fn groq_tool_payload_and_completion_reservation_stay_bounded() {
+        let full_size = native_tools().to_string().len();
+        let routed = native_tools_for(
+            "groq",
+            &[user_message("Projede bu UI hatasını incele ve düzelt")],
+        );
+        assert!(routed.to_string().len() < full_size / 2);
+        assert_eq!(effective_max_output_tokens("groq", Some(65_536)), 1536);
+        assert_eq!(effective_max_output_tokens("openai", Some(65_536)), 16_384);
     }
 }
 
@@ -3714,6 +3971,60 @@ mod security_tests {
             &mut standard_payload,
         );
         assert!(standard_payload.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn groq_reasoning_modes_follow_each_model_api_contract() {
+        let mut config = config_with_legacy_secret();
+        config.thinking_mode = Some("off".to_string());
+        config.model = "qwen/qwen3.6-27b".to_string();
+        let mut qwen = serde_json::json!({});
+        apply_thinking_params(
+            providers::ProviderProtocol::OpenAiChat,
+            "groq",
+            &config,
+            &mut qwen,
+        );
+        assert_eq!(qwen["reasoning_effort"], "none");
+
+        config.model = "openai/gpt-oss-120b".to_string();
+        let mut gpt_oss = serde_json::json!({
+            "tools": [{"type":"function","function":{"name":"read_file"}}]
+        });
+        apply_thinking_params(
+            providers::ProviderProtocol::OpenAiChat,
+            "groq",
+            &config,
+            &mut gpt_oss,
+        );
+        assert_eq!(gpt_oss["reasoning_effort"], "low");
+        assert_eq!(gpt_oss["reasoning_format"], "parsed");
+    }
+
+    #[test]
+    fn groq_stream_payload_does_not_reserve_the_whole_free_tier_bucket() {
+        let mut config = config_with_legacy_secret();
+        config.provider = "groq".to_string();
+        config.model = "qwen/qwen3.6-27b".to_string();
+        config.max_output_tokens = Some(65_536);
+        config.thinking_mode = Some("off".to_string());
+        let body = stream_body(
+            &config,
+            &[NativeMessage {
+                role: "user".to_string(),
+                content: Some("Ayak?".to_string()),
+                tool_call_id: None,
+                tool_calls: None,
+                reasoning_content: None,
+                thinking_signature: None,
+            }],
+        );
+        let payload: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(payload["max_completion_tokens"], 1536);
+        assert!(payload.get("max_tokens").is_none());
+        assert!(payload.get("tools").is_none());
+        assert!(payload.get("tool_choice").is_none());
+        assert_eq!(payload["reasoning_effort"], "none");
     }
 
     #[test]

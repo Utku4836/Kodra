@@ -9,21 +9,9 @@
     <script type="module" src="/main.js" defer></script>
   </head>
   <body>
-    <div class="app">
-      <!-- HEADER — trafik lambaları + klasör + model + göstergeler -->
-      <header class="title-bar">
-        <div class="traffic-lights">
-          <button class="traffic-light red" id="btn-close" title="Close"><span class="icon">×</span></button>
-          <button class="traffic-light yellow" id="btn-min" title="Minimize"><span class="icon">—</span></button>
-          <button class="traffic-light green" id="btn-max" title="Maximize"><span class="icon">□</span></button>
-        </div>
-        <div class="path-wrap">
-          <span class="path" id="path">~</span>
-        </div>
-        <div class="connection-state" id="connection-state" role="status" aria-live="polite" hidden>No internet</div>
-      </header>
-
-      <!-- CONTEXT ÇİZGİSİ — token doluluğu (2px) -->
+    <div class="app" id="app-shell">
+      <div class="window-drag-region" id="window-drag-region" aria-hidden="true"></div>
+      <div class="connection-state" id="connection-state" role="status" aria-live="polite" hidden>No internet</div>
 
       <!-- MAIN — kart akışı -->
       <main class="main-area">
@@ -57,6 +45,9 @@
                 <span class="thinking-name" id="thinking-name">standard</span>
               </button>
             </div>
+            <div class="dock-workspace" title="Current workspace">
+              <span class="path" id="path">~</span>
+            </div>
             <div class="dock-meta-right">
               <!-- AI WORKING / STOP INDICATOR — Context'in hemen solunda, sade ve kutusuz -->
               <button class="stream-inline-btn" id="stream-actions" type="button" title="Stop response (Esc)" aria-label="Stop response" hidden>
@@ -71,7 +62,6 @@
                   <circle class="ctx-gauge-fill" id="ctx-gauge-fill" cx="12" cy="12" r="8.5" />
                 </svg>
                 <span class="ctx-ring" id="ctx-fill" aria-hidden="true" style="display:none;"></span>
-                <span class="ctx-pct" id="ctx-pct">0%</span>
               </div>
             </div>
           </div>
@@ -225,6 +215,13 @@
       <!-- ERROR OVERLAY -->
       <div class="err-overlay" id="err-overlay" style="display: none;"></div>
       <div class="status-toast" id="status-toast" role="status" aria-live="polite" hidden></div>
+
+      <div class="window-menu" id="window-menu" role="menu" aria-label="Window controls" hidden>
+        <button type="button" role="menuitem" data-window-action="minimize">Minimize</button>
+        <button type="button" role="menuitem" data-window-action="toggle-maximize">Maximize / Restore</button>
+        <div class="window-menu-separator" role="separator"></div>
+        <button type="button" role="menuitem" data-window-action="close">Close</button>
+      </div>
     </div>
   </body>
 </html>
