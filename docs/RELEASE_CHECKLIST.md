@@ -58,10 +58,10 @@ This checklist tracks the `develop` build. It does not authorize publishing a re
 
 - [x] Final diff and generated-file scope are reviewed.
 - [x] Secret and stale-product-string scans are clean.
-- [ ] Intended changes are committed and pushed to `develop`.
-- [ ] The pushed commit is confirmed on `origin/develop`.
+- [x] Intended changes are committed and pushed to `develop`.
+- [x] The pushed commit is confirmed on `origin/develop`.
 - [x] The workflow creates only a manual draft prerelease.
-- [ ] No `0.2.0` release is published without explicit owner approval.
+- [x] No `0.2.0` release is published without explicit owner approval.
 
 ## Candidate artifact record
 
