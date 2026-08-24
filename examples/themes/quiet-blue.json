@@ -1,0 +1,30 @@
+{
+  "id": "quiet-blue",
+  "label": "Quiet Blue",
+  "version": 1,
+  "colorScheme": "dark",
+  "transparency": "opaque",
+  "tokens": {
+    "canvas.background": "#070b10",
+    "canvas.ambient": "linear-gradient(145deg, rgba(135, 190, 230, 0.045), transparent 48%)",
+    "surface.panel": "#0a1017",
+    "surface.raised": "#0c131c",
+    "surface.hover": "rgba(155, 200, 236, 0.055)",
+    "surface.selected": "rgba(155, 200, 236, 0.09)",
+    "text.primary": "#edf5ff",
+    "text.response": "#e5edf6",
+    "text.secondary": "#b8c6d4",
+    "text.muted": "#687685",
+    "text.user": "#a9bdd0",
+    "text.link": "#9bc8ec",
+    "border.normal": "rgba(175, 211, 239, 0.12)",
+    "border.focus": "rgba(175, 211, 239, 0.38)",
+    "accent.primary": "#9bc8ec",
+    "accent.soft": "rgba(155, 200, 236, 0.12)",
+    "code.background": "rgba(155, 200, 236, 0.035)",
+    "code.keyword": "#a9c9ee",
+    "code.string": "#acd2ba",
+    "code.number": "#d7bd91",
+    "selection.background": "rgba(155, 200, 236, 0.2)"
+  }
+}

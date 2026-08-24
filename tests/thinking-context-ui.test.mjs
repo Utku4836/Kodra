@@ -31,7 +31,7 @@ test("index.html contains the minimal thinking trigger, shared selection menu, s
   const ctxStatus = doc.getElementById("ctx-status");
   assert.ok(ctxStatus, "ctx-status exists");
   assert.ok(doc.getElementById("ctx-gauge-fill"), "ctx-gauge-fill circle exists");
-  assert.ok(doc.getElementById("ctx-pct"), "ctx-pct span exists");
+  assert.equal(doc.getElementById("ctx-pct"), null, "context remains a number-free ring");
 });
 
 test("context gauge calculations produce smooth offsets and threshold states", () => {
@@ -82,4 +82,15 @@ test("thinking command opens the shared animated menu and writes the Tauri camel
   assert.match(main, /config\.thinkingMode = mode\.id/);
   assert.doesNotMatch(main, /configCache\.thinking_mode\s*=/);
   assert.doesNotMatch(css, /\.thinking-ruler-wrap|\.ruler-major-col|\.ruler-minor-tick/);
+});
+
+test("composer mode is a dedicated Auto, Build, or Plan command instead of a Tab toggle", () => {
+  const main = fs.readFileSync(path.join(__dirname, "../src/main.js"), "utf8");
+  const html = fs.readFileSync(path.join(__dirname, "../src/index.html"), "utf8");
+  assert.match(main, /\{ id: "auto", name: "Auto" \}/);
+  assert.match(main, /\{ id: "build", name: "Build" \}/);
+  assert.match(main, /\{ id: "plan", name: "Plan" \}/);
+  assert.match(main, /openModal\("composer-mode"\)/);
+  assert.doesNotMatch(main, /composerWorkflow\?\.toggleMode\(\)/);
+  assert.doesNotMatch(html, /composer-mode-toggle/);
 });

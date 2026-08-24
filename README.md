@@ -31,6 +31,9 @@ It is intentionally restrained. There are no dashboards competing for attention,
 - Show session usage, estimated cost when pricing is configured, context consumption, API calls, and provider rate-limit data when the provider exposes it.
 - Diagnose credentials, model catalogs, endpoints, tool support, latency, and provider-specific account information.
 - Decide when tools need approval with smart, strict, or autonomous permission modes.
+- Switch between Auto, Build, and Plan workflows without changing the active provider.
+- Choose Kodra, Mist, or Ember from `/themes`, or add a validated local JSON theme.
+- Attach model-supported images and documents, with long pasted text kept as compact inline content.
 - Stay usable offline for saved sessions and cached model metadata.
 
 ## Supported providers
@@ -71,6 +74,8 @@ Type `/` to open the command menu.
 | --- | --- |
 | `/model` | Choose a model from linked providers. |
 | `/thinking` | Choose from the thinking modes reported for the active model. |
+| `/mode` | Switch between Auto, Build, and Plan workflows. |
+| `/themes` | Choose a built-in or locally installed theme. |
 | `/provider` | Add, switch, test, reconnect, or remove a provider. |
 | `/diagnostics` | Inspect provider health and run a deeper connection test. |
 | `/permissions` | Change how tool approvals are handled. |
@@ -90,7 +95,7 @@ AI tools can read and change real files, so the permission mode matters.
 | Mode | Behaviour |
 | --- | --- |
 | `smart` | Reads automatically; writes and risky actions ask for approval. This is the default. |
-| `strict` | Every action above low risk asks for approval. |
+| `strict` | Every tool action asks for approval. |
 | `autonomous` | Runs permitted tools without approval prompts. Destructive command rules and critical-path protection still apply. |
 
 The native layer rejects known destructive shell patterns and always requires approval around critical system paths. Treat autonomous mode with the same care you would give an unattended terminal process.
@@ -109,7 +114,7 @@ The native layer rejects known destructive shell patterns and always requires ap
 ### Requirements
 
 - Windows 10 or Windows 11
-- Node.js 20 or newer
+- Node.js 20.19+, 22.13+, or 24+ (an active LTS release is recommended)
 - Rust stable with the `x86_64-pc-windows-msvc` target
 - Microsoft C++ Build Tools
 - Microsoft Edge WebView2 Runtime
@@ -134,19 +139,20 @@ Run the full validation suite:
 npm run release:check
 ```
 
-Build the application without installers:
+Build only the application executable:
 
 ```powershell
 npm run build:app
 ```
 
-Build the Windows installers:
+Build and stage the complete Windows release candidate:
 
 ```powershell
-npm run build
+npm run assets:installer
+npm run build:release
 ```
 
-Tauri writes release artifacts under `src-tauri/target/release/bundle/`.
+The final release set is written to `release-artifacts/v<version>/`: one NSIS setup executable, one portable executable, `SHA256SUMS.txt`, and a machine-readable manifest. MSI is intentionally not produced. GitHub supplies the source ZIP and TAR archives when a release is created.
 
 ## Development commands
 
@@ -157,14 +163,16 @@ Tauri writes release artifacts under `src-tauri/target/release/bundle/`.
 | `npm run test:rust` | Runs the Rust test suite. |
 | `npm run check:rust` | Type-checks the native application. |
 | `npm run benchmark:runtime` | Measures the UI runtime hot paths. |
+| `npm run assets:installer` | Regenerates the deterministic Kodra NSIS artwork. |
+| `npm run build:release` | Builds and stages one setup plus one portable executable. |
 | `npm run verify:release` | Verifies versions, metadata, security settings, icons, and release documents. |
 | `npm run release:check` | Runs the checks required before producing a release candidate. |
 
 ## Project layout
 
 ```text
-src/                     Browser-side UI, Markdown rendering, motion, and menus
-src-tauri/src/           Rust commands, providers, sessions, tools, and security checks
+src/                     Browser-side features, registries, themes, Markdown, motion, and menus
+src-tauri/src/           Rust commands, providers, sessions, policies, themes, and security checks
 src-tauri/icons/         Application icon source and generated platform icons
 tests/                   DOM, Markdown, diagnostics, performance, and motion tests
 benchmarks/              Runtime micro-benchmarks
@@ -174,9 +182,13 @@ docs/                    Release checklist and maintainer notes
 
 The frontend is plain HTML, CSS, and JavaScript. Rust owns credentials, provider requests, filesystem operations, session persistence, and the permission boundary. Tauri connects the two layers through explicit commands and capabilities.
 
+For extension points and module ownership, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Theme authors can start with [docs/THEMES.md](docs/THEMES.md) and [examples/themes/quiet-blue.json](examples/themes/quiet-blue.json). Windows packaging is documented in [docs/RELEASING.md](docs/RELEASING.md).
+
+Common frontend defaults live in `src/kodra.config.js`; commands, selection surfaces, themes, session metrics, and the system prompt each have independent modules and contract tests. Runtime extensions can inspect the safe snapshot at `KodraExtensions.config` without gaining access to credentials or conversations.
+
 ## Release status
 
-Version `0.1.0` is the first public release. Windows installers are available on the [Releases page](https://github.com/Utku4836/Kodra/releases). The installers are not code-signed yet, so Microsoft SmartScreen may show a warning on first run.
+Version `0.1.0` remains the latest published release. The `develop` branch is preparing `0.2.0`, including the theme and extension systems and the simplified setup-plus-portable release layout. No `0.2.0` release is published automatically. The Windows binaries are not code-signed yet, so Microsoft SmartScreen may show a warning on first run.
 
 See [CHANGELOG.md](CHANGELOG.md), [RELEASE_NOTES.md](RELEASE_NOTES.md), and [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) for the current release state.
 

@@ -3,13 +3,57 @@
   --md-border: rgba(255, 255, 255, 0.075);
   --md-border-strong: rgba(255, 255, 255, 0.13);
   color: rgba(247, 248, 249, 0.94);
-  font-size: 14px;
+  font-size: var(--conversation-font-size);
   font-weight: 450;
-  line-height: 1.68;
+  line-height: var(--conversation-line-height);
   overflow-wrap: anywhere;
 }
 
+/* Live Markdown V3: settled blocks never repaint; only the active tail changes. */
+.md-live-stream {
+  position: relative;
+}
+.md-stream-settled {
+  display: contents;
+}
+.md-stream-live,
+.md-stream-block {
+  min-width: 0;
+}
+.md-stream-block > :first-child,
+.md-stream-live > :first-child { margin-top: 0; }
+.md-stream-block > :last-child,
+.md-stream-live > :last-child { margin-bottom: 0; }
+.md-stream-block-settled {
+  animation: md-block-settle 140ms cubic-bezier(0.16, 0.82, 0.22, 1) both;
+}
+.md-stream-structure-enter {
+  animation: md-structure-enter 120ms cubic-bezier(0.16, 0.82, 0.22, 1) both;
+}
+.md-stream-live.md-incomplete .md-code-block:last-child {
+  border-bottom-color: rgba(255, 255, 255, 0.18);
+}
+.md-stream-live .md-code-action:disabled {
+  opacity: 0.32;
+  cursor: default;
+}
+.md-stream-live :is(.md-external-link, .md-path) {
+  cursor: default;
+  pointer-events: none;
+}
+
+@keyframes md-block-settle {
+  from { opacity: 0.78; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes md-structure-enter {
+  from { opacity: 0.84; transform: translateY(1px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 .rich-message p { margin: 0 0 10px; }
+.rich-message :is(del, s) { color: rgba(255, 255, 255, 0.48); text-decoration-thickness: 1px; }
 .rich-message > :first-child { margin-top: 0; }
 .rich-message > :last-child { margin-bottom: 0; }
 
@@ -186,7 +230,9 @@
   padding: 0 15px 0 48px;
   counter-increment: md-code-line;
   white-space: pre;
+  transition: background 100ms ease;
 }
+.md-code-line:hover { background: rgba(255, 255, 255, 0.018); }
 .md-code-line::before {
   content: counter(md-code-line);
   display: inline-block;
@@ -208,6 +254,24 @@
   background: linear-gradient(transparent, rgba(3, 4, 5, 0.96));
 }
 .md-code-block.is-collapsed .md-code-header { position: relative; z-index: 3; }
+
+.md-code-command {
+  border-radius: 10px;
+  background: rgba(3, 4, 5, 0.82);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.028), 0 10px 28px rgba(0, 0, 0, 0.14);
+}
+.md-code-command .md-code-header { min-height: 32px; padding-inline: 11px 8px; }
+.md-code-command .md-code-count { display: none; }
+.rich-message .md-code-command pre { padding: 9px 0 10px; }
+.md-code-command .md-code-line { min-height: 1.5em; padding-left: 34px; }
+.md-code-command .md-code-line::before {
+  content: "›";
+  width: 12px;
+  margin-left: -22px;
+  margin-right: 10px;
+  color: rgba(153, 187, 216, 0.58);
+  text-align: left;
+}
 
 .md-token-comment { color: #626a72; font-style: italic; }
 .md-token-keyword { color: #e6e9ed; font-weight: 620; }
@@ -255,6 +319,8 @@
 .rich-message .md-table-wrap td:last-child { border-right: 0; }
 .rich-message .md-table-wrap tbody tr:last-child td { border-bottom: 0; }
 .rich-message .md-table-wrap th { position: sticky; top: 0; color: rgba(255, 255, 255, 0.68); background: rgba(10, 11, 12, 0.95); font: 620 10px/1.3 var(--font-ui); text-align: left; }
+.rich-message .md-table-wrap tbody tr { transition: background 100ms ease; }
+.rich-message .md-table-wrap tbody tr:hover { background: rgba(255, 255, 255, 0.018); }
 
 .rich-message.md-incomplete .md-code-block:last-child { border-bottom-color: rgba(255, 255, 255, 0.18); }
 .rich-message.md-render-fallback { white-space: pre-wrap; }
@@ -269,8 +335,22 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  html:not([data-motion-preference="full"]) .md-stream-block-settled,
+  html:not([data-motion-preference="full"]) .md-stream-structure-enter { animation: none !important; }
   html:not([data-motion-preference="full"]) .md-code-block pre,
   html:not([data-motion-preference="full"]) .md-code-action,
   html:not([data-motion-preference="full"]) .md-path,
   html:not([data-motion-preference="full"]) .md-external-link { transition-duration: 0.01ms !important; }
 }
+
+/* Activity reasoning is supporting context, not the primary assistant answer. */
+.activity-thinking-content.rich-message,
+.activity-thinking-message.rich-message {
+  color: rgba(214, 217, 221, 0.84);
+  font-size: 12.25px;
+  font-weight: 450;
+  line-height: 1.62;
+}
+
+.activity-thinking-content.rich-message p,
+.activity-thinking-message.rich-message p { margin-bottom: 7px; }

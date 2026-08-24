@@ -6,11 +6,21 @@ use tauri::Manager;
 use tauri_plugin_opener::OpenerExt;
 use zeroize::Zeroize;
 
+mod config_store;
 mod diagnostics;
+mod permissions;
 mod providers;
 mod secrets;
 mod sessions;
 mod streaming;
+mod themes;
+
+#[cfg(test)]
+use config_store::LinkedProvider;
+use config_store::{
+    config_path, default_mode, read_stored_config, request_timeout, resolve_secret,
+    save_stored_config, sync_active_provider, write_sanitized_config, AppConfig,
+};
 
 const MODEL_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 const MODEL_CACHE_STALE_TTL: std::time::Duration = std::time::Duration::from_secs(60 * 60);
@@ -52,54 +62,6 @@ struct CommandResult {
     stdout: String,
     stderr: String,
     exit_code: i32,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct AppConfig {
-    provider: String,
-    #[serde(default, skip_serializing)]
-    api_key: String,
-    base_url: String,
-    model: String,
-    #[serde(default = "default_mode")]
-    mode: String,
-    #[serde(default)]
-    allow_list: Vec<String>,
-    #[serde(default)]
-    providers: Vec<LinkedProvider>,
-    #[serde(default)]
-    context_limit: Option<u64>,
-    #[serde(default)]
-    context_ratio: Option<f64>,
-    #[serde(default)]
-    max_output_tokens: Option<u64>,
-    #[serde(default)]
-    input_price_per_million: Option<f64>,
-    #[serde(default)]
-    output_price_per_million: Option<f64>,
-    #[serde(default)]
-    cached_input_price_per_million: Option<f64>,
-    #[serde(default)]
-    protocol: Option<String>,
-    #[serde(default)]
-    auth_scheme: Option<String>,
-    #[serde(default)]
-    secret_ref: Option<String>,
-    #[serde(default)]
-    models_path: Option<String>,
-    #[serde(default)]
-    chat_path: Option<String>,
-    #[serde(default)]
-    header_names: Vec<String>,
-    #[serde(default)]
-    request_timeout_secs: Option<u64>,
-    #[serde(default)]
-    allow_local_network: bool,
-    #[serde(default)]
-    thinking_mode: Option<String>,
-    #[serde(default)]
-    thinking_budget: Option<u64>,
 }
 
 fn model_cache_key(config: &AppConfig) -> ModelCacheKey {
@@ -154,46 +116,6 @@ fn invalidate_model_cache(provider: &str) {
     cache.retain(|key, _| key.provider != provider);
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct LinkedProvider {
-    id: String,
-    #[serde(default, skip_serializing)]
-    api_key: String,
-    base_url: String,
-    model: String,
-    #[serde(default)]
-    protocol: Option<String>,
-    #[serde(default)]
-    auth_scheme: Option<String>,
-    #[serde(default)]
-    secret_ref: Option<String>,
-    #[serde(default)]
-    models_path: Option<String>,
-    #[serde(default)]
-    chat_path: Option<String>,
-    #[serde(default)]
-    header_names: Vec<String>,
-    #[serde(default)]
-    request_timeout_secs: Option<u64>,
-    #[serde(default)]
-    allow_local_network: bool,
-    #[serde(default)]
-    context_limit: Option<u64>,
-    #[serde(default)]
-    max_output_tokens: Option<u64>,
-    #[serde(default)]
-    input_price_per_million: Option<f64>,
-    #[serde(default)]
-    output_price_per_million: Option<f64>,
-    #[serde(default)]
-    cached_input_price_per_million: Option<f64>,
-    #[serde(default)]
-    thinking_mode: Option<String>,
-    #[serde(default)]
-    thinking_budget: Option<u64>,
-}
-
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ProviderConnectionInput {
@@ -246,235 +168,19 @@ struct CredentialStatus {
     message: String,
 }
 
-fn default_mode() -> String {
-    "smart".to_string()
-}
-
-fn config_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
-    let dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| format!("Could not locate config directory: {}", e))?;
-    fs::create_dir_all(&dir).map_err(|e| format!("Could not create config directory: {}", e))?;
-    Ok(dir.join("config.json"))
-}
-
-fn request_timeout(config: &AppConfig, fallback: u64) -> std::time::Duration {
-    std::time::Duration::from_secs(
-        config
-            .request_timeout_secs
-            .unwrap_or(fallback)
-            .clamp(5, 120),
-    )
-}
-
-fn write_sanitized_config(path: &Path, config: &AppConfig) -> Result<(), String> {
-    let raw = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
-    let temporary = path.with_extension("json.new");
-    fs::write(&temporary, raw).map_err(|e| format!("Could not prepare config: {}", e))?;
-    fs::copy(&temporary, path).map_err(|e| format!("Config kaydedilemedi: {}", e))?;
-    let _ = fs::remove_file(temporary);
-    Ok(())
-}
-
-fn linked_from_active(config: &AppConfig) -> LinkedProvider {
-    LinkedProvider {
-        id: config.provider.clone(),
-        api_key: config.api_key.clone(),
-        base_url: config.base_url.clone(),
-        model: config.model.clone(),
-        protocol: config.protocol.clone(),
-        auth_scheme: config.auth_scheme.clone(),
-        secret_ref: config.secret_ref.clone(),
-        models_path: config.models_path.clone(),
-        chat_path: config.chat_path.clone(),
-        header_names: config.header_names.clone(),
-        request_timeout_secs: config.request_timeout_secs,
-        allow_local_network: config.allow_local_network,
-        context_limit: config.context_limit,
-        max_output_tokens: config.max_output_tokens,
-        input_price_per_million: config.input_price_per_million,
-        output_price_per_million: config.output_price_per_million,
-        cached_input_price_per_million: config.cached_input_price_per_million,
-        thinking_mode: config.thinking_mode.clone(),
-        thinking_budget: config.thinking_budget,
-    }
-}
-
-fn sync_active_provider(config: &mut AppConfig) {
-    if let Some(provider) = config
-        .providers
-        .iter()
-        .find(|item| item.id == config.provider)
-    {
-        config.api_key.clear();
-        config.base_url = provider.base_url.clone();
-        config.model = provider.model.clone();
-        config.protocol = provider.protocol.clone();
-        config.auth_scheme = provider.auth_scheme.clone();
-        config.secret_ref = provider.secret_ref.clone();
-        config.models_path = provider.models_path.clone();
-        config.chat_path = provider.chat_path.clone();
-        config.header_names = provider.header_names.clone();
-        config.request_timeout_secs = provider.request_timeout_secs;
-        config.allow_local_network = provider.allow_local_network;
-        config.context_limit = provider.context_limit;
-        config.max_output_tokens = provider.max_output_tokens;
-        config.input_price_per_million = provider.input_price_per_million;
-        config.output_price_per_million = provider.output_price_per_million;
-        config.cached_input_price_per_million = provider.cached_input_price_per_million;
-        config.thinking_mode = provider.thinking_mode.clone();
-        config.thinking_budget = provider.thinking_budget;
-    }
-}
-
-fn migrate_config_secrets(config: &mut AppConfig) -> Result<bool, String> {
-    let mut changed = false;
-    if !config.provider.is_empty()
-        && !config
-            .providers
-            .iter()
-            .any(|provider| provider.id == config.provider)
-    {
-        config.providers.push(linked_from_active(config));
-        changed = true;
-    }
-
-    for provider in &mut config.providers {
-        if !provider.api_key.is_empty() {
-            let secret_ref = provider
-                .secret_ref
-                .clone()
-                .unwrap_or(secrets::provider_reference(&provider.id)?);
-            secrets::store(
-                &secret_ref,
-                &secrets::SecretBundle {
-                    api_key: provider.api_key.clone(),
-                    headers: Vec::new(),
-                },
-            )?;
-            provider.secret_ref = Some(secret_ref);
-            provider.api_key.clear();
-            changed = true;
-        }
-    }
-
-    if !config.api_key.is_empty() {
-        if let Some(active) = config
-            .providers
-            .iter_mut()
-            .find(|provider| provider.id == config.provider)
-        {
-            if active.secret_ref.is_none() {
-                let secret_ref = secrets::provider_reference(&active.id)?;
-                secrets::store(
-                    &secret_ref,
-                    &secrets::SecretBundle {
-                        api_key: config.api_key.clone(),
-                        headers: Vec::new(),
-                    },
-                )?;
-                active.secret_ref = Some(secret_ref);
-            }
-        }
-        config.api_key.clear();
-        changed = true;
-    }
-    sync_active_provider(config);
-    Ok(changed)
-}
-
-fn validate_and_clean_config(config: &mut AppConfig) -> bool {
-    let mut changed = false;
-    config.providers.retain(|p| {
-        let auth = p.auth_scheme.as_deref().unwrap_or("bearer");
-        if auth == "none" && p.header_names.is_empty() {
-            return true;
-        }
-        if let Some(secret_ref) = &p.secret_ref {
-            if secrets::exists(secret_ref) {
-                return true;
-            }
-        }
-        changed = true;
-        false
-    });
-    if !config.provider.is_empty() {
-        let auth = config.auth_scheme.as_deref().unwrap_or("bearer");
-        let is_none_auth = auth == "none" && config.header_names.is_empty();
-        if !is_none_auth {
-            let has_secret = config
-                .secret_ref
-                .as_ref()
-                .map(|r| secrets::exists(r))
-                .unwrap_or(false);
-            if !has_secret {
-                config.provider.clear();
-                config.model.clear();
-                config.secret_ref = None;
-                changed = true;
-            }
-        }
-    }
-    if config.provider.is_empty() && !config.providers.is_empty() {
-        config.provider = config.providers[0].id.clone();
-        sync_active_provider(config);
-        changed = true;
-    }
-    changed
-}
-
-fn read_stored_config(app: &tauri::AppHandle) -> Result<Option<AppConfig>, String> {
-    let path = config_path(app)?;
-    if !path.exists() {
-        return Ok(None);
-    }
-    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let mut config: AppConfig = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
-    let mut changed = migrate_config_secrets(&mut config)?;
-    if validate_and_clean_config(&mut config) {
-        changed = true;
-    }
-    if changed {
-        write_sanitized_config(&path, &config)?;
-    }
-    if config.provider.is_empty() && config.providers.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(config))
-}
-
-/// Kayıtlı config'i secret değerleri olmadan döndürür.
+/// Returns stored configuration without secret values.
 #[tauri::command]
 fn get_config(app: tauri::AppHandle) -> Result<Option<AppConfig>, String> {
     read_stored_config(&app)
 }
 
-/// Config'i yalnızca secret reference ve public metadata ile kaydeder.
+/// Stores only secret references and public configuration metadata.
 #[tauri::command]
 fn save_config(app: tauri::AppHandle, mut config: AppConfig) -> Result<(), String> {
-    migrate_config_secrets(&mut config)?;
-    write_sanitized_config(&config_path(&app)?, &config)
+    save_stored_config(&app, &mut config)
 }
 
-fn resolve_secret(config: &AppConfig) -> Result<secrets::SecretBundle, String> {
-    if !config.api_key.is_empty() {
-        return Ok(secrets::SecretBundle {
-            api_key: config.api_key.clone(),
-            headers: Vec::new(),
-        });
-    }
-    if let Some(secret_ref) = config.secret_ref.as_deref() {
-        return secrets::read(secret_ref);
-    }
-    let auth = providers::effective_auth(&config.provider, config.auth_scheme.as_deref());
-    if auth == providers::AuthScheme::None && config.header_names.is_empty() {
-        return Ok(secrets::SecretBundle::default());
-    }
-    Err("Stored credentials were not found; reconnect the provider".to_string())
-}
-
-/// Provider'a göre doğru auth, endpoint ve güvenli headerlarla models isteği kurar.
+/// Builds the model request with provider-specific authentication, endpoint, and safe headers.
 fn build_models_request(
     config: &AppConfig,
     secret: &secrets::SecretBundle,
@@ -660,7 +366,7 @@ fn disconnect_provider(
     Ok(Some(config))
 }
 
-/// Kayıtlı config'ten model listesini döndürür
+/// Returns the model list for the stored provider configuration.
 #[tauri::command]
 async fn list_models(
     config: AppConfig,
@@ -700,7 +406,7 @@ async fn list_models(
     .map_err(|e| format!("Worker thread error: {}", e))?
 }
 
-/// Mevcut çalışma dizinini döndürür
+/// Returns the current working directory.
 #[tauri::command]
 fn pwd() -> String {
     std::env::current_dir()
@@ -708,7 +414,7 @@ fn pwd() -> String {
         .unwrap_or_else(|_| "/".to_string())
 }
 
-/// Kullanıcı ev dizinini döndürür
+/// Returns the user home directory.
 #[tauri::command]
 fn home() -> String {
     dirs_home()
@@ -759,7 +465,7 @@ fn open_external_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
         .map_err(|e| format!("Could not open link: {e}"))
 }
 
-/// Dosyalari calistirmadan Explorer'da gosterir; dizinleri varsayilan gezginde acar.
+/// Reveals files in Explorer without executing them and opens directories in the default shell.
 #[tauri::command]
 fn reveal_local_path(app: tauri::AppHandle, path: String) -> Result<String, String> {
     let canonical = resolve_reveal_path(&path)?;
@@ -775,7 +481,7 @@ fn reveal_local_path(app: tauri::AppHandle, path: String) -> Result<String, Stri
     Ok(canonical.display().to_string())
 }
 
-/// Çalışma dizinini değiştirir
+/// Changes the current working directory.
 #[tauri::command]
 fn change_dir(path: &str) -> Result<String, String> {
     let path = expand_path(path);
@@ -792,7 +498,7 @@ fn change_dir(path: &str) -> Result<String, String> {
     Ok(path)
 }
 
-/// Bir sistem komutunu çalıştırır (eski /run komutu için — tool kullanmıyor)
+/// Runs a system command for the legacy `/run` path.
 #[tauri::command]
 fn run_command(command: &str, args: Vec<String>) -> Result<CommandResult, String> {
     let output = Command::new(command)
@@ -807,13 +513,13 @@ fn run_command(command: &str, args: Vec<String>) -> Result<CommandResult, String
     })
 }
 
-/// Uygulamayı kapatır
+/// Quits the application.
 #[tauri::command]
 fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
-/// ~ ve . gibi kısaltmaları açar
+/// Expands path shorthand such as `~` and `.`.
 fn expand_path(path: &str) -> String {
     if path == "~" {
         return dirs_home();
@@ -843,12 +549,101 @@ pub(crate) struct NativeMessage {
     tool_call_id: Option<String>,
     #[serde(default)]
     tool_calls: Option<Vec<ToolCallMsg>>,
-    /// DeepSeek ve Fireworks gibi OpenAI-uyumlu sağlayıcılarda araç turu
-    /// devam ederken düşünme içeriğinin kaybolmamasını sağlar.
+    /// Preserves reasoning content across tool rounds for OpenAI-compatible
+    /// providers such as DeepSeek and Fireworks.
     #[serde(default)]
     reasoning_content: Option<String>,
     #[serde(default)]
     thinking_signature: Option<String>,
+    #[serde(default)]
+    attachments: Vec<NativeAttachment>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct NativeAttachment {
+    name: String,
+    mime_type: String,
+    kind: String,
+    #[serde(default)]
+    size: u64,
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    data_url: Option<String>,
+}
+
+fn split_data_url(value: &str) -> Option<(&str, &str)> {
+    let (header, data) = value.split_once(',')?;
+    let media_type = header.strip_prefix("data:")?.strip_suffix(";base64")?;
+    (!media_type.is_empty() && !data.is_empty()).then_some((media_type, data))
+}
+
+fn validate_native_messages(
+    protocol: providers::ProviderProtocol,
+    messages: &[NativeMessage],
+) -> Result<(), String> {
+    let mut encoded_total = 0usize;
+    for message in messages {
+        if message.attachments.len() > 4 {
+            return Err("A message can contain at most 4 attachments".into());
+        }
+        for attachment in &message.attachments {
+            if message.role != "user" {
+                return Err("Attachments are only allowed on user messages".into());
+            }
+            if attachment.name.is_empty() || attachment.name.chars().count() > 180 {
+                return Err("Attachment name is invalid".into());
+            }
+            if attachment.mime_type.is_empty() || attachment.mime_type.len() > 100 {
+                return Err("Attachment media type is invalid".into());
+            }
+            match attachment.kind.as_str() {
+                "text" => {
+                    let text = attachment.text.as_deref().unwrap_or_default();
+                    if text.is_empty() || text.len() > 256 * 1024 {
+                        return Err("Text attachments must be between 1 byte and 256 KB".into());
+                    }
+                    encoded_total = encoded_total.saturating_add(text.len());
+                }
+                "image" => {
+                    let value = attachment.data_url.as_deref().unwrap_or_default();
+                    let (media_type, data) = split_data_url(value)
+                        .ok_or_else(|| "Image attachment must use a base64 data URL".to_string())?;
+                    if !media_type.starts_with("image/") || media_type != attachment.mime_type {
+                        return Err(
+                            "Image attachment media type does not match its data URL".into()
+                        );
+                    }
+                    if data.len() > 4 * 1024 * 1024 {
+                        return Err("Image attachments must be 3 MB or smaller".into());
+                    }
+                    encoded_total = encoded_total.saturating_add(data.len());
+                }
+                "document" => {
+                    if protocol == providers::ProviderProtocol::OpenAiChat {
+                        return Err("PDF attachments are not supported by the active Chat Completions protocol".into());
+                    }
+                    let value = attachment.data_url.as_deref().unwrap_or_default();
+                    let (media_type, data) = split_data_url(value)
+                        .ok_or_else(|| "PDF attachment must use a base64 data URL".to_string())?;
+                    if media_type != "application/pdf" || attachment.mime_type != "application/pdf"
+                    {
+                        return Err("Document attachments must be application/pdf".into());
+                    }
+                    if data.len() > 4 * 1024 * 1024 {
+                        return Err("PDF attachments must be 3 MB or smaller".into());
+                    }
+                    encoded_total = encoded_total.saturating_add(data.len());
+                }
+                _ => return Err("Unsupported attachment kind".into()),
+            }
+        }
+    }
+    if encoded_total > 6 * 1024 * 1024 {
+        return Err("Attachments are too large for a single request".into());
+    }
+    Ok(())
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -1059,7 +854,7 @@ pub(crate) fn rate_limits_from_response(response: &ureq::Response) -> Option<Rat
     rate_limits_from_headers(|name| response.header(name).map(str::to_string))
 }
 
-/// Native tool şemaları — OpenAI-compatible format (17 araç)
+/// Native tool schemas in OpenAI-compatible format.
 fn native_tools() -> &'static serde_json::Value {
     static TOOLS: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
     TOOLS.get_or_init(|| serde_json::json!([
@@ -1079,13 +874,189 @@ fn native_tools() -> &'static serde_json::Value {
         {"type":"function","function":{"name":"github_action","description":"Git operations: commit, create PR, view issues, repo status.","parameters":{"type":"object","properties":{"action":{"type":"string","enum":["commit","create_pr","view_issues","repo_status"],"description":"Operation"},"message":{"type":"string","description":"Commit/PR message"},"branch":{"type":"string","description":"Branch name"}},"required":["action"]}}},
         {"type":"function","function":{"name":"analyze_codebase","description":"Analyzes code: symbol definition, references or directory structure.","parameters":{"type":"object","properties":{"symbol":{"type":"string","description":"Symbol to analyze"},"type":{"type":"string","enum":["definition","references","structure"],"description":"Analysis type"},"path":{"type":"string","description":"Directory scope"}},"required":[]}}},
         {"type":"function","function":{"name":"manage_memory","description":"Reads, adds or clears project memory at ~/.agent/MEMORIES.md.","parameters":{"type":"object","properties":{"action":{"type":"string","enum":["read","add","clear"],"description":"Operation"},"key":{"type":"string","description":"Memory key"},"value":{"type":"string","description":"Memory value"}},"required":["action"]}}},
-        {"type":"function","function":{"name":"spawn_sub_agent","description":"Delegates a complex subtask to an independent sub-agent and returns its report.","parameters":{"type":"object","properties":{"sub_task_prompt":{"type":"string","description":"Subtask description"},"model":{"type":"string","description":"Optional model override"},"timeout_seconds":{"type":"number","description":"Timeout in seconds"}},"required":["sub_task_prompt"]}}}
+        {"type":"function","function":{"name":"spawn_sub_agent","description":"Delegates a complex subtask to an independent sub-agent and returns its report.","parameters":{"type":"object","properties":{"sub_task_prompt":{"type":"string","description":"Subtask description"},"model":{"type":"string","description":"Optional model override"},"timeout_seconds":{"type":"number","description":"Timeout in seconds"}},"required":["sub_task_prompt"]}}},
+        {"type":"function","function":{"name":"enter_plan_mode","description":"Presents a concrete implementation plan for user review before any mutating work. Wait for the tool result before continuing.","parameters":{"type":"object","properties":{"title":{"type":"string","description":"Short plan title"},"rationale":{"type":"string","description":"Why planning is useful for this task"},"steps":{"type":"array","items":{"type":"string"},"minItems":2,"maxItems":12,"description":"Concrete ordered implementation steps"}},"required":["title","steps"]}}}
     ]))
 }
 
-/// Her turda tüm opsiyonel araç şemalarını prompta koymak yerine, temel kodlama
-/// araçlarını sabit tutar ve yalnızca açıkça istenen uzak yetenekleri ekler.
-fn native_tools_for(messages: &[NativeMessage]) -> serde_json::Value {
+/// Keeps core coding tools stable and adds optional remote capabilities only
+/// when the request needs them instead of sending every schema on every turn.
+fn last_user_request(messages: &[NativeMessage]) -> String {
+    messages
+        .iter()
+        .rev()
+        .find(|message| message.role == "user")
+        .and_then(|message| message.content.as_deref())
+        .unwrap_or_default()
+        .to_lowercase()
+}
+
+fn request_mentions(request: &str, words: &[&str]) -> bool {
+    words.iter().any(|word| request.contains(word))
+}
+
+/// Groq's free tier has a tight per-minute token budget. Sending the complete
+/// tool library on conversational turns wastes most of it before generation
+/// starts, so route only the tools that match the current user intent.
+fn groq_tool_names(messages: &[NativeMessage]) -> Vec<&'static str> {
+    let request = last_user_request(messages);
+    let mut selected = Vec::new();
+    let mut add = |names: &[&'static str]| {
+        for name in names {
+            if selected.len() >= 5 {
+                break;
+            }
+            if !selected.contains(name) {
+                selected.push(*name);
+            }
+        }
+    };
+
+    let web = request_mentions(
+        &request,
+        &[
+            "web",
+            "internet",
+            "site",
+            "url",
+            "http",
+            "araştır",
+            "güncel",
+            "browse",
+        ],
+    );
+    let github = request_mentions(
+        &request,
+        &[
+            "github",
+            "git ",
+            "commit",
+            "push",
+            "pull request",
+            "repo",
+            "issue",
+        ],
+    );
+    let memory = request_mentions(&request, &["hafıza", "memory", "hatırla"]);
+    let delegation = request_mentions(
+        &request,
+        &[
+            "alt ajan",
+            "sub-agent",
+            "sub agent",
+            "delege",
+            "paralel ajan",
+        ],
+    );
+    let command = request_mentions(
+        &request,
+        &[
+            "komut",
+            "command",
+            "terminal",
+            "çalıştır",
+            "run ",
+            "build",
+            "test",
+            "npm",
+            "cargo",
+        ],
+    );
+    let process = request_mentions(
+        &request,
+        &[
+            "server",
+            "sunucu",
+            "process",
+            "süreç",
+            "background",
+            "arka plan",
+        ],
+    );
+    let delete = request_mentions(&request, &["sil", "delete", "remove", "kaldır"]);
+    let create = request_mentions(
+        &request,
+        &[
+            "oluştur",
+            "yarat",
+            "create",
+            "new file",
+            "yeni dosya",
+            "klasör aç",
+        ],
+    );
+    let edit = request_mentions(
+        &request,
+        &[
+            "kod",
+            "code",
+            "düzelt",
+            "fix",
+            "değiştir",
+            "edit",
+            "uygula",
+            "implement",
+            "refactor",
+            "tasarım",
+            "ui",
+            "uygulama",
+            "app",
+            "proje",
+            "project",
+        ],
+    );
+    let inspect = request_mentions(
+        &request,
+        &[
+            "dosya", "file", "klasör", "folder", "oku", "read", "liste", "list", "ara ", "search",
+            "incele", "bak ", "analyze", "masaüst", "desktop", "path",
+        ],
+    );
+
+    if web {
+        add(&["web_fetch", "browser_automation"]);
+    }
+    if github {
+        add(&["github_action", "execute_command", "read_file"]);
+    }
+    if memory {
+        add(&["manage_memory"]);
+    }
+    if delegation {
+        add(&["spawn_sub_agent"]);
+    }
+    if delete {
+        add(&["list_dir", "delete_file"]);
+    } else if create {
+        add(&["list_dir", "read_file", "write_file", "create_dir"]);
+    } else if edit {
+        add(&[
+            "read_file",
+            "search_code",
+            "edit_file",
+            "execute_command",
+            "list_dir",
+        ]);
+    } else if inspect {
+        add(&[
+            "read_file",
+            "list_dir",
+            "search_code",
+            "glob_files",
+            "analyze_codebase",
+        ]);
+    }
+    if command {
+        add(&["execute_command", "read_file"]);
+    }
+    if process {
+        add(&["manage_background_process", "execute_command"]);
+    }
+
+    selected
+}
+
+fn native_tools_for(provider: &str, messages: &[NativeMessage]) -> serde_json::Value {
     const CORE_TOOLS: &[&str] = &[
         "read_file",
         "list_dir",
@@ -1100,18 +1071,48 @@ fn native_tools_for(messages: &[NativeMessage]) -> serde_json::Value {
         "manage_background_process",
         "analyze_codebase",
     ];
-    let request = messages
-        .iter()
-        .rev()
-        .find(|message| message.role == "user")
-        .and_then(|message| message.content.as_deref())
-        .unwrap_or_default()
-        .to_lowercase();
-    let mut selected = CORE_TOOLS
-        .iter()
-        .copied()
-        .collect::<std::collections::HashSet<_>>();
-    let mentions = |words: &[&str]| words.iter().any(|word| request.contains(word));
+    let request = last_user_request(messages);
+    let mut selected: std::collections::HashSet<&str> = if provider == "groq" {
+        groq_tool_names(messages).into_iter().collect()
+    } else {
+        CORE_TOOLS.iter().copied().collect()
+    };
+    let explicit_plan = request_mentions(
+        &request,
+        &[
+            "plan",
+            "roadmap",
+            "yol haritas",
+            "mimari",
+            "architecture",
+            "refactor",
+            "implement",
+            "uygula",
+            "yeniden",
+            "phase",
+            "faz ",
+            "multiple",
+            "several",
+        ],
+    );
+    let forced_plan_mode = messages.iter().any(|message| {
+        message.role == "system"
+            && message
+                .content
+                .as_deref()
+                .is_some_and(|content| content.contains("Current composer mode: PLAN"))
+    });
+    if provider != "groq" || explicit_plan || forced_plan_mode {
+        if provider == "groq" && selected.len() >= 5 {
+            for optional in ["list_dir", "analyze_codebase", "glob_files"] {
+                if selected.remove(optional) {
+                    break;
+                }
+            }
+        }
+        selected.insert("enter_plan_mode");
+    }
+    let mentions = |words: &[&str]| request_mentions(&request, words);
 
     if mentions(&[
         "web",
@@ -1155,8 +1156,26 @@ fn native_tools_for(messages: &[NativeMessage]) -> serde_json::Value {
     )
 }
 
-/// LLM chat isteği — provider'a göre uygun API'ye gönderir
-/// Net hata mesajı — 429/404/503 özel açıklamalı
+fn effective_max_output_tokens(provider: &str, configured: Option<u64>) -> u64 {
+    let requested = configured.unwrap_or(4096).clamp(256, 16384);
+    if provider == "groq" {
+        // Leaves enough of the common 8K TPM free-tier bucket for prompt tokens
+        // and a second interactive turn instead of reserving 4K+ every request.
+        requested.min(1536)
+    } else {
+        requested
+    }
+}
+
+fn attach_openai_tools(payload: &mut serde_json::Value, tools: serde_json::Value) {
+    if tools.as_array().is_some_and(|items| !items.is_empty()) {
+        payload["tools"] = tools;
+        payload["tool_choice"] = serde_json::json!("auto");
+    }
+}
+
+/// Sends a blocking LLM request through the active provider protocol.
+/// Maps common 429/404/503 responses to safe, actionable errors.
 fn redact_sensitive(input: &str) -> String {
     let mut output = input.to_string();
     for prefix in [
@@ -1287,8 +1306,8 @@ fn map_ureq_err(e: ureq::Error) -> String {
     }
 }
 
-/// 429: retry YOK (limit dolu — tekrar denemek pencereyi çifte tüketir).
-/// 503 (sunucu yükü): 3sn bekleyip bir kez tekrar dener.
+/// Never retries 429 because retrying consumes the same quota window twice.
+/// Retries one 503 response after three seconds.
 fn send_with_retry<F>(build: F, body: &str) -> Result<ureq::Response, String>
 where
     F: Fn() -> Result<ureq::Request, String>,
@@ -1306,7 +1325,7 @@ where
     }
 }
 
-/// 429: retry YOK (çifte tüketim olmasın). 503: 3sn bekle, bir kez dene.
+/// Never retries 429; retries one 503 response after three seconds.
 fn call_with_retry<F>(build: F) -> Result<ureq::Response, String>
 where
     F: Fn() -> Result<ureq::Request, String>,
@@ -1325,8 +1344,8 @@ where
     }
 }
 
-/// Blocking chat çağrısı — hem chat_completion hem sub-agent kullanır
-/// Provider'a göre history dönüşümü — OpenAI-compatible
+/// Blocking chat path shared by normal completion and delegated agents.
+/// Converts history to the OpenAI-compatible message shape.
 fn openai_messages(provider: &str, messages: &[NativeMessage]) -> Vec<serde_json::Value> {
     messages
         .iter()
@@ -1363,6 +1382,30 @@ fn openai_messages(provider: &str, messages: &[NativeMessage]) -> Vec<serde_json
                     })
                 }
             }
+            _ if m.role == "user" && !m.attachments.is_empty() => {
+                let mut content = vec![serde_json::json!({
+                    "type": "text",
+                    "text": m.content.clone().unwrap_or_default()
+                })];
+                for attachment in &m.attachments {
+                    match attachment.kind.as_str() {
+                        "text" => content.push(serde_json::json!({
+                            "type": "text",
+                            "text": format!(
+                                "\n\n--- attached file: {} ---\n{}\n--- end file ---",
+                                attachment.name,
+                                attachment.text.as_deref().unwrap_or_default()
+                            )
+                        })),
+                        "image" => content.push(serde_json::json!({
+                            "type": "image_url",
+                            "image_url": {"url": attachment.data_url.as_deref().unwrap_or_default()}
+                        })),
+                        _ => {}
+                    }
+                }
+                serde_json::json!({"role": "user", "content": content})
+            }
             _ => serde_json::json!({
                 "role": m.role,
                 "content": m.content.clone().unwrap_or_default()
@@ -1371,9 +1414,9 @@ fn openai_messages(provider: &str, messages: &[NativeMessage]) -> Vec<serde_json
         .collect()
 }
 
-/// Gemini history dönüşümü — tool_call_id → name eşleme ile
+/// Converts history to Gemini content and maps tool-call IDs back to names.
 fn gemini_contents(messages: &[NativeMessage]) -> Vec<serde_json::Value> {
-    // tool_call_id → name haritası (assistant tool_calls'tan)
+    // Build the tool-call ID to name map from assistant tool calls.
     let mut id_to_name: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
     for m in messages {
@@ -1389,7 +1432,7 @@ fn gemini_contents(messages: &[NativeMessage]) -> Vec<serde_json::Value> {
     let mut out: Vec<serde_json::Value> = Vec::new();
     for m in messages {
         match m.role.as_str() {
-            "system" => {} // system_instruction alanına ayrıca gider
+            "system" => {} // Sent separately as system_instruction.
             "tool" => {
                 let name = m
                     .tool_call_id
@@ -1411,7 +1454,7 @@ fn gemini_contents(messages: &[NativeMessage]) -> Vec<serde_json::Value> {
                 }
                 if let Some(tcs) = &m.tool_calls {
                     for tc in tcs {
-                        // Gemini 3.x: functionCall'a id ekle; thoughtSignature PART seviyesinde gönderilir
+                        // Gemini 3.x keeps the call ID and thought signature at part level.
                         let mut fc = serde_json::json!({
                             "functionCall": {"name": tc.name, "args": tc.arguments, "id": tc.id}
                         });
@@ -1424,22 +1467,38 @@ fn gemini_contents(messages: &[NativeMessage]) -> Vec<serde_json::Value> {
                 out.push(serde_json::json!({"role": "model", "parts": parts}));
             }
             _ => {
-                out.push(serde_json::json!({
-                    "role": "user",
-                    "parts": [{"text": m.content.clone().unwrap_or_default()}]
-                }));
+                let mut parts =
+                    vec![serde_json::json!({"text": m.content.clone().unwrap_or_default()})];
+                for attachment in &m.attachments {
+                    if attachment.kind == "text" {
+                        parts.push(serde_json::json!({
+                            "text": format!(
+                                "\n\n--- attached file: {} ---\n{}\n--- end file ---",
+                                attachment.name,
+                                attachment.text.as_deref().unwrap_or_default()
+                            )
+                        }));
+                    } else if let Some((_, data)) =
+                        attachment.data_url.as_deref().and_then(split_data_url)
+                    {
+                        parts.push(serde_json::json!({
+                            "inlineData": {"mimeType": attachment.mime_type, "data": data}
+                        }));
+                    }
+                }
+                out.push(serde_json::json!({"role": "user", "parts": parts}));
             }
         }
     }
     out
 }
 
-/// Anthropic history dönüşümü
+/// Converts history to Anthropic messages.
 fn anthropic_messages(messages: &[NativeMessage]) -> Vec<serde_json::Value> {
     let mut out: Vec<serde_json::Value> = Vec::new();
     for m in messages {
         match m.role.as_str() {
-            "system" => {} // "system" alanına ayrıca gider
+            "system" => {} // Sent separately in the system field.
             "tool" => {
                 out.push(serde_json::json!({
                     "role": "user",
@@ -1477,10 +1536,46 @@ fn anthropic_messages(messages: &[NativeMessage]) -> Vec<serde_json::Value> {
                 out.push(serde_json::json!({"role": "assistant", "content": content}));
             }
             _ => {
-                out.push(serde_json::json!({
-                    "role": "user",
-                    "content": m.content.clone().unwrap_or_default()
-                }));
+                if m.attachments.is_empty() {
+                    out.push(serde_json::json!({
+                        "role": "user",
+                        "content": m.content.clone().unwrap_or_default()
+                    }));
+                } else {
+                    let mut content = vec![serde_json::json!({
+                        "type": "text",
+                        "text": m.content.clone().unwrap_or_default()
+                    })];
+                    for attachment in &m.attachments {
+                        if attachment.kind == "text" {
+                            content.push(serde_json::json!({
+                                "type": "text",
+                                "text": format!(
+                                    "\n\n--- attached file: {} ---\n{}\n--- end file ---",
+                                    attachment.name,
+                                    attachment.text.as_deref().unwrap_or_default()
+                                )
+                            }));
+                        } else if let Some((_, data)) =
+                            attachment.data_url.as_deref().and_then(split_data_url)
+                        {
+                            let block_type = if attachment.kind == "document" {
+                                "document"
+                            } else {
+                                "image"
+                            };
+                            content.push(serde_json::json!({
+                                "type": block_type,
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": attachment.mime_type,
+                                    "data": data
+                                }
+                            }));
+                        }
+                    }
+                    out.push(serde_json::json!({"role": "user", "content": content}));
+                }
             }
         }
     }
@@ -1545,34 +1640,65 @@ fn apply_thinking_params(
                 serde_json::json!({ "thinkingBudget": budget });
         }
         providers::ProviderProtocol::OpenAiChat => {
-            let effort = match mode.as_str() {
-                "deep" => "high",
-                "balanced" => "medium",
-                "fast" => "low",
-                other => other,
-            };
-            if !matches!(effort, "off" | "standard" | "disabled")
-                && (provider == "openai"
-                    || provider == "openrouter"
-                    || provider == "together"
-                    || provider == "groq"
-                    || provider == "deepseek")
-            {
-                payload["reasoning_effort"] = serde_json::json!(effort);
+            if provider == "groq" {
+                let model = config.model.to_ascii_lowercase();
+                let effort = if model.contains("qwen3") {
+                    Some(
+                        if matches!(mode.as_str(), "off" | "none" | "disabled" | "standard") {
+                            "none"
+                        } else {
+                            "default"
+                        },
+                    )
+                } else if model.contains("gpt-oss") {
+                    Some(match mode.as_str() {
+                        "deep" | "high" | "xhigh" => "high",
+                        "balanced" | "medium" => "medium",
+                        _ => "low",
+                    })
+                } else {
+                    None
+                };
+                if let Some(effort) = effort {
+                    payload["reasoning_effort"] = serde_json::json!(effort);
+                    let has_tools = payload
+                        .get("tools")
+                        .and_then(serde_json::Value::as_array)
+                        .is_some_and(|tools| !tools.is_empty());
+                    if has_tools && effort != "none" {
+                        payload["reasoning_format"] = serde_json::json!("parsed");
+                    }
+                }
+            } else {
+                let effort = match mode.as_str() {
+                    "deep" => "high",
+                    "balanced" => "medium",
+                    "fast" => "low",
+                    other => other,
+                };
+                if !matches!(effort, "off" | "standard" | "disabled")
+                    && (provider == "openai"
+                        || provider == "openrouter"
+                        || provider == "together"
+                        || provider == "deepseek")
+                {
+                    payload["reasoning_effort"] = serde_json::json!(effort);
+                }
             }
         }
     }
 }
 
-/// Blocking chat çağrısı — hem chat_completion hem sub-agent kullanır
+/// Blocking chat path shared by normal completion and delegated agents.
 fn chat_blocking(config: &AppConfig, messages: &[NativeMessage]) -> Result<ChatResult, String> {
     let provider = config.provider.as_str();
     let protocol = providers::effective_protocol(provider, config.protocol.as_deref());
+    validate_native_messages(protocol, messages)?;
     let timeout = request_timeout(config, 45);
     let secret = resolve_secret(config)?;
-    let tools = native_tools_for(messages);
+    let tools = native_tools_for(provider, messages);
 
-    // System promptunu ayır (provider'a göre ayrı alana gider)
+    // Separate the system prompt for protocols that use a dedicated field.
     let system_text: String = messages
         .iter()
         .filter(|m| m.role == "system")
@@ -1585,7 +1711,7 @@ fn chat_blocking(config: &AppConfig, messages: &[NativeMessage]) -> Result<ChatR
         .cloned()
         .collect();
 
-    let max_out = config.max_output_tokens.unwrap_or(4096).clamp(256, 16384);
+    let max_out = effective_max_output_tokens(provider, config.max_output_tokens);
     let mut payload = match protocol {
         providers::ProviderProtocol::AnthropicMessages => serde_json::json!({
             "model": config.model,
@@ -1611,14 +1737,15 @@ fn chat_blocking(config: &AppConfig, messages: &[NativeMessage]) -> Result<ChatR
         providers::ProviderProtocol::OpenAiChat => {
             let mut p = serde_json::json!({
                 "model": config.model,
-                "tools": tools,
-                "tool_choice": "auto",
-                // OpenAI-uyumlular: system dahil bütün mesajlar gönderilir.
+                // OpenAI-compatible providers receive the complete message list.
                 "messages": openai_messages(provider, messages)
             });
-            if provider == "openai" {
+            attach_openai_tools(&mut p, tools);
+            if provider == "openai" || provider == "groq" {
                 p["max_completion_tokens"] = serde_json::json!(max_out);
-                p["store"] = serde_json::json!(false);
+                if provider == "openai" {
+                    p["store"] = serde_json::json!(false);
+                }
             } else {
                 p["max_tokens"] = serde_json::json!(max_out);
             }
@@ -1647,7 +1774,7 @@ fn chat_blocking(config: &AppConfig, messages: &[NativeMessage]) -> Result<ChatR
     let rate_limits = rate_limits_from_response(&resp);
     let out: serde_json::Value = resp.into_json().map_err(|e| e.to_string())?;
 
-    // Yanıtı parse et — metin + tool_calls
+    // Parse response text and tool calls.
     let mut text = String::new();
     let mut tool_calls: Vec<ToolCallData> = Vec::new();
     let mut reasoning = None;
@@ -1844,7 +1971,7 @@ fn chat_blocking(config: &AppConfig, messages: &[NativeMessage]) -> Result<ChatR
     })
 }
 
-/// Async + spawn_blocking: uzun LLM yanıtı UI thread'ini bloklamaz
+/// Keeps long blocking provider calls off the UI thread.
 #[tauri::command]
 async fn chat_completion(
     config: AppConfig,
@@ -1971,7 +2098,7 @@ async fn generate_session_title(
 fn stream_body(config: &AppConfig, messages: &[NativeMessage]) -> String {
     let provider = config.provider.as_str();
     let protocol = providers::effective_protocol(provider, config.protocol.as_deref());
-    let tools = native_tools_for(messages);
+    let tools = native_tools_for(provider, messages);
     let system_text = messages
         .iter()
         .filter(|message| message.role == "system")
@@ -1983,7 +2110,7 @@ fn stream_body(config: &AppConfig, messages: &[NativeMessage]) -> String {
         .filter(|message| message.role != "system")
         .cloned()
         .collect::<Vec<_>>();
-    let max_out = config.max_output_tokens.unwrap_or(4096).clamp(256, 16384);
+    let max_out = effective_max_output_tokens(provider, config.max_output_tokens);
     let mut payload = match protocol {
         providers::ProviderProtocol::AnthropicMessages => serde_json::json!({
             "model": config.model,
@@ -2011,14 +2138,15 @@ fn stream_body(config: &AppConfig, messages: &[NativeMessage]) -> String {
             let mut p = serde_json::json!({
                 "model": config.model,
                 "stream": true,
-                "tools": tools,
-                "tool_choice": "auto",
                 "messages": openai_messages(provider, messages)
             });
-            if provider == "openai" {
+            attach_openai_tools(&mut p, tools);
+            if provider == "openai" || provider == "groq" {
                 p["max_completion_tokens"] = serde_json::json!(max_out);
-                p["store"] = serde_json::json!(false);
-                p["stream_options"] = serde_json::json!({"include_usage": true});
+                if provider == "openai" {
+                    p["store"] = serde_json::json!(false);
+                    p["stream_options"] = serde_json::json!({"include_usage": true});
+                }
             } else {
                 p["max_tokens"] = serde_json::json!(max_out);
             }
@@ -2042,6 +2170,7 @@ async fn chat_completion_stream(
     let result = tauri::async_runtime::spawn_blocking(move || {
         let provider = config.provider.clone();
         let protocol = providers::effective_protocol(&provider, config.protocol.as_deref());
+        validate_native_messages(protocol, &messages)?;
         let timeout = request_timeout(&config, 45);
         let secret = resolve_secret(&config)?;
         let body = stream_body(&config, &messages);
@@ -2135,217 +2264,22 @@ fn delete_session(app: tauri::AppHandle, id: String) -> Result<bool, String> {
 // FAZ 3 — PERMISSION ENGINE + TOOL REGISTRY
 // ============================================================
 
-/// Tool risk seviyesi
-fn tool_risk(tool_id: &str) -> &'static str {
-    match tool_id {
-        "read_file" | "list_dir" | "search_code" | "glob_files" | "web_fetch"
-        | "analyze_codebase" => "low",
-        "write_file" | "edit_file" | "create_dir" | "apply_diff" | "manage_memory"
-        | "browser_automation" | "spawn_sub_agent" => "medium",
-        "delete_file" | "execute_command" | "manage_background_process" | "github_action" => "high",
-        _ => "medium",
-    }
-}
-
-/// Yıkıcı komut tespiti — her koşulda reddedilir
-fn destructive_check(tool_id: &str, params: &serde_json::Value) -> Option<String> {
-    if tool_id != "execute_command" {
-        return None;
-    }
-    let cmd = params
-        .get("cmd")
-        .or_else(|| params.get("command"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let lc = cmd.to_lowercase().trim().to_string();
-
-    // Kesin engel listesi
-    let hard_blocks = [
-        "rm -rf /",
-        "rm -rf /*",
-        "rm -rf c:",
-        "rd /s /q c:",
-        "del /f /s /q",
-        "del /f /q c:\\windows",
-        "diskpart",
-        "mkfs",
-        "fdisk",
-        "chmod -r 777",
-        "chmod 777 /",
-        "remove-item -recurse",
-        "remove-item -force -recurse",
-        ":(){",
-        "reg delete",
-        "shutdown",
-        "reboot",
-        "format c:",
-        "format d:",
-        "format /q",
-        "cipher /w",
-    ];
-    for p in hard_blocks {
-        if lc.contains(p) {
-            return Some(format!("Destructive command blocked: {}", p));
-        }
-    }
-    // "format" tam komut olarak (Format-Table gibi zararsızları yakalamaz)
-    if lc == "format" || lc.starts_with("format ") {
-        return Some("format command blocked".to_string());
-    }
-    // Çıplak rm -rf (herhangi bir yol)
-    if lc.contains("rm -rf") {
-        return Some("rm -rf blocked".to_string());
-    }
-    None
-}
-
-/// Kritik yol koruması — mod ne olursa olsun onay gerektirir
-fn critical_path_check(tool_id: &str, params: &serde_json::Value) -> bool {
-    // Okuma işlemleri serbest
-    if matches!(tool_id, "read_file" | "list_dir" | "search_code") {
-        return false;
-    }
-    // Parametrelerdeki path değerlerini tara
-    let mut paths: Vec<String> = Vec::new();
-    if let Some(p) = params.get("path").and_then(|v| v.as_str()) {
-        paths.push(p.to_string());
-    }
-    if let Some(p) = params.get("old").and_then(|v| v.as_str()) {
-        paths.push(p.to_string());
-    }
-    if let Some(p) = params.get("new").and_then(|v| v.as_str()) {
-        paths.push(p.to_string());
-    }
-    if let Some(p) = params.get("cmd").and_then(|v| v.as_str()) {
-        paths.push(p.to_string());
-    }
-
-    let critical_segments = [
-        ".env",
-        "node_modules",
-        "\\.git",
-        "\\windows\\",
-        "/windows/",
-        "program files",
-        "/etc/",
-        "/usr/",
-        ".ssh",
-        "appdata",
-        "system32",
-        "\\boot\\",
-        "/boot/",
-        "config.json",
-    ];
-
-    for p in &paths {
-        let lower = p.to_lowercase();
-        for seg in critical_segments {
-            if lower.contains(seg) {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-/// Allow list anahtarı — tool + parametre bazlı
-fn tool_allow_key(tool_id: &str, params: &serde_json::Value) -> String {
-    // Komut için ilk kelime + tool; dosya için path kısa hali
-    if tool_id == "execute_command" {
-        let cmd = params
-            .get("cmd")
-            .or_else(|| params.get("command"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let first = cmd.split_whitespace().next().unwrap_or("").to_lowercase();
-        format!("{}:{}", tool_id, first)
-    } else {
-        let path = params
-            .get("path")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_lowercase();
-        format!("{}:{}", tool_id, path)
-    }
-}
-
-#[derive(Serialize)]
-struct ToolCheckResult {
-    decision: String, // "allow" | "approve" | "deny"
-    risk: String,     // "low" | "medium" | "high"
-    reason: String,
-}
-
-/// Tool çağrısını mod + kurallara göre değerlendirir (JS onay modalı öncesi)
+/// Evaluates a tool call before the frontend approval surface is shown.
 #[tauri::command]
 fn check_tool(
     config: AppConfig,
     tool_id: String,
     params: serde_json::Value,
-) -> Result<ToolCheckResult, String> {
-    let risk = tool_risk(&tool_id).to_string();
-
-    // 1) Yıkıcı komut — derhal reddet
-    if let Some(reason) = destructive_check(&tool_id, &params) {
-        return Ok(ToolCheckResult {
-            decision: "deny".into(),
-            risk: "high".into(),
-            reason,
-        });
-    }
-
-    // 2) Kritik yol — mod ne olursa olsun onay (allow_list bile bypass edemez)
-    let critical = critical_path_check(&tool_id, &params);
-    if critical {
-        return Ok(ToolCheckResult {
-            decision: "approve".into(),
-            risk,
-            reason: "Critical system path — approval required".into(),
-        });
-    }
-
-    // 3) Kalıcı allow list
-    let key = tool_allow_key(&tool_id, &params);
-    if config.allow_list.contains(&key) {
-        return Ok(ToolCheckResult {
-            decision: "allow".into(),
-            risk,
-            reason: "Permanently allowed".into(),
-        });
-    }
-
-    // 4) Mod bazlı karar
-    let decision = match config.mode.as_str() {
-        "autonomous" => "allow",
-        "strict" => {
-            if risk == "low" {
-                "allow"
-            } else {
-                "approve"
-            }
-        }
-        _ => {
-            // smart (varsayılan)
-            if risk == "low" {
-                "allow"
-            } else {
-                "approve"
-            }
-        }
-    };
-
-    Ok(ToolCheckResult {
-        decision: decision.into(),
-        risk,
-        reason: if decision == "allow" {
-            "Low risk — automatic".into()
-        } else {
-            "Approval required".into()
-        },
-    })
+) -> Result<permissions::ToolCheckResult, String> {
+    Ok(permissions::evaluate(
+        &config.mode,
+        &config.allow_list,
+        &tool_id,
+        &params,
+    ))
 }
 
-// ---- /undo geri alma — dosya değişiklikleri öncesi snapshot ----
+// ---- /undo snapshots captured before file mutations ----
 
 fn snapshot_file(path: &str) {
     let p = Path::new(&path);
@@ -2384,7 +2318,7 @@ fn snapshot_file(path: &str) {
     }
 }
 
-/// Son yapılan dosya değişikliğini geri alır (/undo)
+/// Restores the last file change captured for `/undo`.
 #[tauri::command]
 fn undo_last() -> Result<String, String> {
     let manifest_path = format!("{}/.agent/undo/undo_manifest.json", dirs_home());
@@ -2405,7 +2339,7 @@ fn undo_last() -> Result<String, String> {
     Ok(format!("Undone: {}", original))
 }
 
-// ---- Tool uygulamaları ----
+// ---- Tool implementations ----
 
 fn tool_write_file(path: &str, content: &str) -> Result<String, String> {
     let path = expand_path(path);
@@ -2485,7 +2419,7 @@ fn tool_search_code(path: &str, pattern: &str) -> Result<serde_json::Value, Stri
                 }
                 walk(&path, pattern, results, max, count)?;
             } else {
-                // Sadece metin dosyaları dene
+                // Inspect text files only.
                 let Ok(content) = fs::read_to_string(&path) else {
                     continue;
                 };
@@ -2512,14 +2446,14 @@ fn tool_search_code(path: &str, pattern: &str) -> Result<serde_json::Value, Stri
 }
 
 // ============================================================
-// FAZ 4 — GENİŞLETİLMİŞ TOOL EKOSİSTEMİ
+// Extended tool ecosystem
 // ============================================================
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
 use std::sync::{Arc, Mutex as StdMutex};
 
-/// Basit glob eşleştirici — *, **, ? destekler
+/// Small glob matcher supporting `*`, `**`, and `?`.
 fn glob_match(pattern: &str, path: &str) -> bool {
     let p: Vec<char> = pattern.chars().collect();
     let s: Vec<char> = path.chars().collect();
@@ -2542,9 +2476,9 @@ fn glob_match(pattern: &str, path: &str) -> bool {
     rec(&p, &s)
 }
 
-/// glob deseni ile dosya bulma — node_modules/.git/target atlanır
+/// Finds files by glob while skipping node_modules, .git, and target.
 fn tool_glob_files(pattern: &str) -> Result<Vec<String>, String> {
-    // Pattern'deki ilk dizin segmentini kök olarak al
+    // Use the first directory segment in the pattern as the search root.
     let (root, pat) = if pattern.contains('/') || pattern.contains('\\') {
         let sep = if pattern.contains('\\') { '\\' } else { '/' };
         let idx = pattern.find(sep).unwrap();
@@ -2599,7 +2533,7 @@ fn tool_glob_files(pattern: &str) -> Result<Vec<String>, String> {
     Ok(results)
 }
 
-/// Basit HTML -> Markdown dönüştürücü
+/// Small bounded HTML-to-Markdown converter.
 fn html_to_markdown(html: &str) -> String {
     let mut out = String::new();
     let mut in_pre = false;
@@ -2658,7 +2592,7 @@ fn html_to_markdown(html: &str) -> String {
                     in_pre = false;
                 }
                 "script" | "style" => {
-                    // İçeriği atla
+                    // Skip tag contents.
                     if let Some(close) = html[i..].find(&format!("</{}>", tname)) {
                         i += close + tname.len() + 4;
                         continue;
@@ -2672,7 +2606,7 @@ fn html_to_markdown(html: &str) -> String {
             i += 1;
         }
     }
-    // Çoklu boş satırları sadeleştir
+    // Collapse repeated blank lines.
     let mut cleaned = String::new();
     let mut prev_blank = false;
     for line in out.lines() {
@@ -2691,7 +2625,7 @@ fn html_to_markdown(html: &str) -> String {
     cleaned.trim().to_string()
 }
 
-/// web_fetch — URL içeriğini çeker, markdown'a çevirir
+/// Fetches a URL and converts its bounded content to Markdown.
 fn tool_web_fetch(url: &str) -> Result<String, String> {
     let resp = ureq::get(url)
         .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36")
@@ -2719,7 +2653,7 @@ fn tool_apply_diff(path: &str, diff_content: &str) -> Result<String, String> {
     if !dir.is_dir() {
         return Err(format!("Directory not found: {}", path));
     }
-    // Diff'i geçici dosyaya yaz
+    // Write the diff to a temporary file for the patch process.
     let tmp = std::env::temp_dir().join(format!("diff_{}.patch", std::process::id()));
     fs::write(&tmp, diff_content).map_err(|e| e.to_string())?;
     let output = Command::new("git")
@@ -2736,7 +2670,7 @@ fn tool_apply_diff(path: &str, diff_content: &str) -> Result<String, String> {
     }
 }
 
-/// analyze_codebase — sembol analizi (grep tabanlı)
+/// Performs a bounded grep-based codebase analysis.
 fn tool_analyze_codebase(
     symbol: &str,
     kind: &str,
@@ -2810,7 +2744,7 @@ fn tool_analyze_codebase(
 
     let mut count = 0;
     if kind == "structure" {
-        // Dizin ağacı (2 seviye)
+        // Directory tree, limited to two levels.
         let mut tree: Vec<String> = Vec::new();
         fn tree_walk(dir: &Path, depth: usize, tree: &mut Vec<String>) -> Result<(), String> {
             if depth > 2 {
@@ -2881,7 +2815,7 @@ fn tool_manage_memory(action: &str, key: &str, value: &str) -> Result<String, St
     }
 }
 
-/// Edge tarayıcı yolunu bul
+/// Finds the Microsoft Edge executable.
 fn find_edge() -> Option<std::path::PathBuf> {
     let candidates = [
         r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
@@ -3016,7 +2950,7 @@ fn tool_github_action(action: &str, message: &str, branch: &str) -> Result<Strin
     }
 }
 
-// ---- Arka plan süreç yönetimi ----
+// ---- Background process management ----
 struct ManagedProcess {
     child: std::process::Child,
     log: Arc<StdMutex<Vec<String>>>,
@@ -3114,7 +3048,7 @@ fn tool_background_process(
     }
 }
 
-/// Tool'u çalıştırır — güvenlik kontrollü (JS onayı ile birlikte çalışır)
+/// Executes a tool after the native security policy authorizes it.
 #[tauri::command]
 async fn execute_approved_tool(
     config: AppConfig,
@@ -3123,27 +3057,15 @@ async fn execute_approved_tool(
     approved: bool,
 ) -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        // Güvenlik katmanı 1: yıkıcı komut — approved olsa bile reddet
-        if let Some(reason) = destructive_check(&tool_id, &params) {
-            return Err(reason);
-        }
-        // Güvenlik katmanı 2: izin kontrolü
-        let critical = critical_path_check(&tool_id, &params);
-        let risk = tool_risk(&tool_id);
-        let key = tool_allow_key(&tool_id, &params);
-        let in_allow = config.allow_list.contains(&key);
-        let mode = config.mode.as_str();
+        permissions::authorize_execution(
+            &config.mode,
+            &config.allow_list,
+            &tool_id,
+            &params,
+            approved,
+        )?;
 
-        let auto_allow = risk == "low" || mode == "autonomous";
-        let authorized = approved || in_allow || auto_allow;
-        if critical && !in_allow && !approved {
-            return Err("Critical path — approval required".into());
-        }
-        if !authorized {
-            return Err("Permission denied — approval required".into());
-        }
-
-        // Tool'u çalıştır
+        // Execute the authorized tool.
         match tool_id.as_str() {
             "read_file" => {
                 let path = params
@@ -3151,7 +3073,7 @@ async fn execute_approved_tool(
                     .and_then(|v| v.as_str())
                     .ok_or("path is required")?;
                 let content = read_file_inner(path)?;
-                // Satır numaralı + aralık desteği
+                // Support line numbers and bounded ranges.
                 let start = params
                     .get("start_line")
                     .and_then(|v| v.as_u64())
@@ -3272,7 +3194,7 @@ async fn execute_approved_tool(
                     .and_then(|v| v.as_u64())
                     .unwrap_or(30000);
 
-                // Windows: cmd /C + timeout desteği (çıktı ayrı thread'de okunur)
+                // Windows command execution with timeout and separate output readers.
                 let mut child = Command::new("cmd")
                     .args(["/C", cmd])
                     .stdout(std::process::Stdio::piped())
@@ -3413,8 +3335,9 @@ async fn execute_approved_tool(
                     tool_calls: None,
                     reasoning_content: None,
                     thinking_signature: None,
+                    attachments: Vec::new(),
                 };
-                // spawn_blocking içindeyiz — direkt blocking çağrı yap
+                // This branch already runs inside spawn_blocking.
                 let reply = chat_blocking(&sub_config, &[msg])?;
                 Ok(serde_json::json!({
                     "sub_agent_reply": reply.text.chars().take(3000).collect::<String>(),
@@ -3428,7 +3351,7 @@ async fn execute_approved_tool(
     .map_err(|e| format!("Worker thread error: {}", e))?
 }
 
-/// read_file iç implementasyonu (tool + eski komut için ortak)
+/// Shared read implementation for tools and the legacy command.
 fn read_file_inner(path: &str) -> Result<String, String> {
     let path = expand_path(path);
     let p = Path::new(&path);
@@ -3441,7 +3364,7 @@ fn read_file_inner(path: &str) -> Result<String, String> {
     fs::read_to_string(p).map_err(|e| e.to_string())
 }
 
-/// list_dir iç implementasyonu (tool + eski komut için ortak)
+/// Shared directory-listing implementation for tools and the legacy command.
 fn list_dir_inner(path: &str) -> Result<Vec<DirEntry>, String> {
     let path = expand_path(path);
     let p = Path::new(&path);
@@ -3471,7 +3394,7 @@ fn list_dir_inner(path: &str) -> Result<Vec<DirEntry>, String> {
     Ok(result)
 }
 
-/// Eski pwd/list_dir/read_file komutlarını tool implementasyonlarına bağla
+/// Routes legacy pwd/list_dir/read_file commands through the tool implementations.
 #[tauri::command]
 fn list_dir(path: &str) -> Result<Vec<DirEntry>, String> {
     list_dir_inner(path)
@@ -3494,7 +3417,102 @@ mod performance_tests {
             tool_calls: None,
             reasoning_content: None,
             thinking_signature: None,
+            attachments: Vec::new(),
         }
+    }
+
+    fn attachment(kind: &str, mime_type: &str, value: &str) -> NativeAttachment {
+        NativeAttachment {
+            name: if kind == "document" {
+                "brief.pdf"
+            } else if kind == "image" {
+                "screen.png"
+            } else {
+                "notes.md"
+            }
+            .to_string(),
+            mime_type: mime_type.to_string(),
+            kind: kind.to_string(),
+            size: value.len() as u64,
+            text: (kind == "text").then(|| value.to_string()),
+            data_url: (kind != "text").then(|| value.to_string()),
+        }
+    }
+
+    #[test]
+    fn provider_message_shapes_preserve_supported_attachments() {
+        let mut openai = user_message("Explain this");
+        openai.attachments = vec![
+            attachment("text", "text/markdown", "# Notes"),
+            attachment("image", "image/png", "data:image/png;base64,YWJj"),
+        ];
+        let openai_payload = openai_messages("openai", &[openai]);
+        assert_eq!(openai_payload[0]["content"][1]["type"], "text");
+        assert_eq!(openai_payload[0]["content"][2]["type"], "image_url");
+
+        let mut gemini = user_message("Read this");
+        gemini.attachments = vec![attachment(
+            "document",
+            "application/pdf",
+            "data:application/pdf;base64,YWJj",
+        )];
+        let gemini_payload = gemini_contents(&[gemini.clone()]);
+        assert_eq!(
+            gemini_payload[0]["parts"][1]["inlineData"]["mimeType"],
+            "application/pdf"
+        );
+        let anthropic_payload = anthropic_messages(&[gemini]);
+        assert_eq!(anthropic_payload[0]["content"][1]["type"], "document");
+    }
+
+    #[test]
+    fn attachment_validation_rejects_protocol_mismatch_and_malformed_media() {
+        let mut message = user_message("Read this");
+        message.attachments = vec![attachment(
+            "document",
+            "application/pdf",
+            "data:application/pdf;base64,YWJj",
+        )];
+        assert!(validate_native_messages(
+            providers::ProviderProtocol::OpenAiChat,
+            &[message.clone()]
+        )
+        .is_err());
+        assert!(validate_native_messages(
+            providers::ProviderProtocol::GeminiGenerateContent,
+            &[message]
+        )
+        .is_ok());
+
+        let mut invalid = user_message("Look");
+        invalid.attachments = vec![attachment(
+            "image",
+            "image/png",
+            "https://example.com/image.png",
+        )];
+        assert!(
+            validate_native_messages(providers::ProviderProtocol::OpenAiChat, &[invalid]).is_err()
+        );
+    }
+
+    #[test]
+    fn groq_exposes_plan_review_only_when_requested_or_forced_by_plan_mode() {
+        let plain = native_tools_for("groq", &[user_message("Hello")]);
+        assert!(!tool_names(&plain).contains(&"enter_plan_mode"));
+        let explicit = native_tools_for("groq", &[user_message("Create a plan for this refactor")]);
+        assert!(tool_names(&explicit).contains(&"enter_plan_mode"));
+        let forced = native_tools_for(
+            "groq",
+            &[
+                NativeMessage {
+                    role: "system".into(),
+                    content: Some("Current composer mode: PLAN".into()),
+                    ..user_message("")
+                },
+                user_message("Refactor the UI"),
+            ],
+        );
+        assert!(tool_names(&forced).contains(&"enter_plan_mode"));
     }
 
     fn tool_names(tools: &serde_json::Value) -> Vec<&str> {
@@ -3513,19 +3531,56 @@ mod performance_tests {
 
     #[test]
     fn optional_remote_tools_only_join_relevant_requests() {
-        let local = native_tools_for(&[user_message("src klasöründeki hatayı düzelt")]);
+        let local = native_tools_for("openai", &[user_message("src klasöründeki hatayı düzelt")]);
         let local_names = tool_names(&local);
         assert!(local_names.contains(&"read_file"));
         assert!(!local_names.contains(&"web_fetch"));
         assert!(!local_names.contains(&"github_action"));
 
-        let remote = native_tools_for(&[user_message(
-            "internetten güncel bilgiyi araştır ve github repoya commit hazırla",
-        )]);
+        let remote = native_tools_for(
+            "openai",
+            &[user_message(
+                "internetten güncel bilgiyi araştır ve github repoya commit hazırla",
+            )],
+        );
         let remote_names = tool_names(&remote);
         assert!(remote_names.contains(&"web_fetch"));
         assert!(remote_names.contains(&"browser_automation"));
         assert!(remote_names.contains(&"github_action"));
+    }
+
+    #[test]
+    fn groq_omits_tools_for_conversation_and_routes_small_task_sets() {
+        let casual = native_tools_for("groq", &[user_message("Ayak?")]);
+        assert!(tool_names(&casual).is_empty());
+
+        let coding = native_tools_for(
+            "groq",
+            &[user_message("Uygulamadaki kod hatasını bul ve düzelt")],
+        );
+        let coding_names = tool_names(&coding);
+        assert!((3..=5).contains(&coding_names.len()));
+        assert!(coding_names.contains(&"read_file"));
+        assert!(coding_names.contains(&"edit_file"));
+        assert!(!coding_names.contains(&"delete_file"));
+
+        let destructive = native_tools_for(
+            "groq",
+            &[user_message("Masaüstündeki deneme.txt dosyasını sil")],
+        );
+        assert!(tool_names(&destructive).contains(&"delete_file"));
+    }
+
+    #[test]
+    fn groq_tool_payload_and_completion_reservation_stay_bounded() {
+        let full_size = native_tools().to_string().len();
+        let routed = native_tools_for(
+            "groq",
+            &[user_message("Projede bu UI hatasını incele ve düzelt")],
+        );
+        assert!(routed.to_string().len() < full_size / 2);
+        assert_eq!(effective_max_output_tokens("groq", Some(65_536)), 1536);
+        assert_eq!(effective_max_output_tokens("openai", Some(65_536)), 16_384);
     }
 }
 
@@ -3717,6 +3772,61 @@ mod security_tests {
     }
 
     #[test]
+    fn groq_reasoning_modes_follow_each_model_api_contract() {
+        let mut config = config_with_legacy_secret();
+        config.thinking_mode = Some("off".to_string());
+        config.model = "qwen/qwen3.6-27b".to_string();
+        let mut qwen = serde_json::json!({});
+        apply_thinking_params(
+            providers::ProviderProtocol::OpenAiChat,
+            "groq",
+            &config,
+            &mut qwen,
+        );
+        assert_eq!(qwen["reasoning_effort"], "none");
+
+        config.model = "openai/gpt-oss-120b".to_string();
+        let mut gpt_oss = serde_json::json!({
+            "tools": [{"type":"function","function":{"name":"read_file"}}]
+        });
+        apply_thinking_params(
+            providers::ProviderProtocol::OpenAiChat,
+            "groq",
+            &config,
+            &mut gpt_oss,
+        );
+        assert_eq!(gpt_oss["reasoning_effort"], "low");
+        assert_eq!(gpt_oss["reasoning_format"], "parsed");
+    }
+
+    #[test]
+    fn groq_stream_payload_does_not_reserve_the_whole_free_tier_bucket() {
+        let mut config = config_with_legacy_secret();
+        config.provider = "groq".to_string();
+        config.model = "qwen/qwen3.6-27b".to_string();
+        config.max_output_tokens = Some(65_536);
+        config.thinking_mode = Some("off".to_string());
+        let body = stream_body(
+            &config,
+            &[NativeMessage {
+                role: "user".to_string(),
+                content: Some("Ayak?".to_string()),
+                tool_call_id: None,
+                tool_calls: None,
+                reasoning_content: None,
+                thinking_signature: None,
+                attachments: Vec::new(),
+            }],
+        );
+        let payload: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(payload["max_completion_tokens"], 1536);
+        assert!(payload.get("max_tokens").is_none());
+        assert!(payload.get("tools").is_none());
+        assert!(payload.get("tool_choice").is_none());
+        assert_eq!(payload["reasoning_effort"], "none");
+    }
+
+    #[test]
     fn thinking_budget_reaches_gemini_generation_config() {
         let mut config = config_with_legacy_secret();
         config.thinking_mode = Some("high".to_string());
@@ -3811,6 +3921,8 @@ pub fn run() {
             home,
             open_external_url,
             reveal_local_path,
+            themes::list_user_themes,
+            themes::open_theme_directory,
             change_dir,
             list_dir,
             read_file,

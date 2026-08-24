@@ -9,18 +9,30 @@ All notable changes to Kodra are recorded here. The project follows [Semantic Ve
 - Selecting a linked provider now opens its API key screen so the credential can be replaced; entering a new key overwrites the old one.
 - Added Groq as a first-class provider with live model discovery.
 - Added a compact, animated `/thinking` menu that exposes only the modes reported for the active model.
+- Added `/mode` with Auto, Build, and Plan workflows.
+- Added `/themes` with Kodra, Mist, and Ember plus bounded local JSON themes.
+- Added model-aware attachments and compact pasted-content handling inside the composer.
+- Added command, modal, theme, and user-theme extension contracts with failure isolation.
+- Added deterministic Kodra artwork for the supported NSIS installer surfaces.
+- Added release staging for exactly one setup executable, one portable executable, and SHA-256 metadata.
 
 ### Changed
 
 - Released the project under the MIT License and made the repository public.
 - Removed Turkish code comments; all comments and documentation are English.
 - Replaced the experimental inline thinking ruler with the shared keyboard-first menu design.
+- Simplified activity groups to one Thinking/Worked hierarchy and aligned tool rows without extra cards.
+- Attached approval and plan review panels directly to the composer.
+- Changed the Windows release layout from NSIS plus MSI to NSIS plus a portable executable.
+- Extracted native permission and user-theme services from the application root.
 
 ### Fixed
 
 - Persist thinking selections with the camelCase configuration schema expected by Tauri and carry them across provider switches.
 - Preserve public reasoning-mode metadata in the offline model cache without storing provider secrets.
 - Forward API-provided OpenAI-compatible reasoning efforts instead of collapsing unknown supported modes to `low`.
+- Require approval for every tool in Strict mode and prevent saved allows from bypassing critical-path checks.
+- Keep menu selection motion stable during rapid keyboard navigation and isolate invalid custom themes.
 
 ### Planned
 

@@ -32,7 +32,10 @@ check(packageJson.license === "MIT", "npm package license is MIT");
 check(Boolean(packageJson.description), "npm package has a description");
 check(packageJson.author === "Utku", "npm package has a release author");
 check(packageJson.repository?.url?.includes("Utku4836/Kodra"), "npm repository metadata is set");
-check(packageJson.engines?.node === ">=20", "Node.js minimum version is declared");
+check(
+  packageJson.engines?.node === "^20.19.0 || ^22.13.0 || >=24.0.0",
+  "supported Node.js ranges are declared",
+);
 check(packageLock.version === packageJson.version, "package-lock version matches package.json");
 check(packageLock.packages?.[""]?.version === packageJson.version, "package-lock root package version matches");
 
@@ -47,7 +50,14 @@ check(tauri.app?.windows?.every((window) => window.devtools === false), "product
 check(Boolean(tauri.app?.security?.csp), "Tauri Content Security Policy is enabled");
 check(tauri.app?.security?.capabilities?.length === 1 && tauri.app.security.capabilities[0] === "default", "only the declared default capability is enabled");
 check(tauri.bundle?.windows?.allowDowngrades === false, "Windows installer downgrades are disabled");
-check(["nsis", "msi"].every((target) => tauri.bundle?.targets?.includes(target)), "NSIS and MSI bundle targets are enabled");
+check(
+  Array.isArray(tauri.bundle?.targets)
+    && tauri.bundle.targets.length === 1
+    && tauri.bundle.targets[0] === "nsis",
+  "only the NSIS installer target is enabled",
+);
+check(packageJson.scripts?.["release:stage"] === "node scripts/package-release.mjs", "release staging command is declared");
+check(packageJson.scripts?.["build:release"]?.includes("release:stage"), "release build stages portable and setup artifacts");
 
 const requiredDocuments = [
   "README.md",
@@ -55,6 +65,9 @@ const requiredDocuments = [
   "RELEASE_NOTES.md",
   "SECURITY.md",
   "docs/RELEASE_CHECKLIST.md",
+  "docs/THEMES.md",
+  "docs/ARCHITECTURE.md",
+  "docs/RELEASING.md",
 ];
 for (const document of requiredDocuments) {
   check(existsSync(join(root, document)), `${document} exists`);
@@ -76,6 +89,19 @@ if (existsSync(sourceIconPath)) {
   check(isPng, "source icon is a PNG");
   check(width === height && width >= 512, "source icon is square and at least 512 px");
   check(colorType === 4 || colorType === 6, "source icon carries an alpha channel");
+}
+
+for (const [name, expectedWidth, expectedHeight] of [
+  ["src-tauri/windows/installer-sidebar.bmp", 164, 314],
+  ["src-tauri/windows/installer-header.bmp", 150, 57],
+]) {
+  const assetPath = join(root, name);
+  check(existsSync(assetPath), `${name} exists`);
+  if (!existsSync(assetPath)) continue;
+  const bitmap = readFileSync(assetPath);
+  const isBitmap = bitmap.length > 26 && bitmap.subarray(0, 2).toString("ascii") === "BM";
+  check(isBitmap, `${name} is a BMP`);
+  check(isBitmap && bitmap.readInt32LE(18) === expectedWidth && Math.abs(bitmap.readInt32LE(22)) === expectedHeight, `${name} has the required NSIS dimensions`);
 }
 
 const frontend = read("src/main.js");

@@ -77,6 +77,7 @@ function defaultWait(ms, windowRef) {
 export function createResponseMotionController({
   element,
   onScroll = () => {},
+  onReveal,
   profile = RESPONSE_MOTION_PROFILE,
   wait = defaultWait,
 } = {}) {
@@ -95,13 +96,22 @@ export function createResponseMotionController({
   let peakBacklog = 0;
   let firstRevealAt = null;
   let tailValue = "";
-  const settledNode = documentRef.createTextNode("");
-  const tailNode = documentRef.createElement("span");
-  tailNode.className = "response-flow-tail";
-  tailNode.setAttribute("aria-hidden", "true");
-  element.append(settledNode, tailNode);
+  let visibleValue = "";
+  const customReveal = typeof onReveal === "function";
+  const settledNode = customReveal ? null : documentRef.createTextNode("");
+  const tailNode = customReveal ? null : documentRef.createElement("span");
+  if (tailNode) {
+    tailNode.className = "response-flow-tail";
+    tailNode.setAttribute("aria-hidden", "true");
+    element.append(settledNode, tailNode);
+  }
 
   const appendFlow = (value) => {
+    visibleValue += value;
+    if (customReveal) {
+      onReveal(visibleValue, value);
+      return;
+    }
     const characters = Array.from(tailValue + value);
     const overflow = Math.max(0, characters.length - profile.tailCharacters);
     if (overflow > 0) settledNode.appendData(characters.slice(0, overflow).join(""));

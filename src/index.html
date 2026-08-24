@@ -1,41 +1,44 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="kodra">
   <head>
     <meta charset="UTF-8" />
+    <script src="themes/theme-bootstrap.js"></script>
     <link rel="stylesheet" href="styles.css" />
     <link rel="stylesheet" href="markdown-ui.css" />
+    <link rel="stylesheet" href="themes/themes.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>cli-terminal-ui</title>
+    <title>Kodra</title>
     <script type="module" src="/main.js" defer></script>
   </head>
   <body>
-    <div class="app">
-      <!-- HEADER — trafik lambaları + klasör + model + göstergeler -->
-      <header class="title-bar">
-        <div class="traffic-lights">
-          <button class="traffic-light red" id="btn-close" title="Close"><span class="icon">×</span></button>
-          <button class="traffic-light yellow" id="btn-min" title="Minimize"><span class="icon">—</span></button>
-          <button class="traffic-light green" id="btn-max" title="Maximize"><span class="icon">□</span></button>
-        </div>
-        <div class="path-wrap">
-          <span class="path" id="path">~</span>
-        </div>
-        <div class="connection-state" id="connection-state" role="status" aria-live="polite" hidden>No internet</div>
-      </header>
+    <div class="app" id="app-shell">
+      <div class="window-drag-region" id="window-drag-region" aria-hidden="true"></div>
+      <div class="connection-state" id="connection-state" role="status" aria-live="polite" hidden>No internet</div>
 
-      <!-- CONTEXT ÇİZGİSİ — token doluluğu (2px) -->
-
-      <!-- MAIN — kart akışı -->
+      <!-- Main transcript flow -->
       <main class="main-area">
         <div id="log" class="log"></div>
       </main>
 
       <!-- BOTTOM BAR — komut input & dock meta -->
       <footer class="bottom-bar">
-        <div class="command-area">
+        <div class="command-area composer-shell" id="composer-shell" data-mode="auto">
+          <section class="composer-panel" id="composer-panel" aria-live="polite" hidden>
+            <header class="composer-panel-header">
+              <h2 class="composer-panel-title" id="composer-panel-title">Action requested</h2>
+            </header>
+            <div class="composer-panel-body" id="composer-panel-body"></div>
+            <textarea class="composer-feedback" id="composer-feedback" rows="3" spellcheck="true" placeholder="Describe what should change..." hidden></textarea>
+            <div class="composer-panel-actions" id="composer-panel-actions"></div>
+          </section>
+
           <div class="command-dock">
+            <button class="attachment-trigger" id="attachment-trigger" type="button" aria-label="Attach a file" title="Attach a file">
+              <span aria-hidden="true">+</span>
+            </button>
             <div class="command-input-wrap">
               <span class="command-prompt" aria-hidden="true">›</span>
+              <div class="attachment-tray" id="attachment-tray" aria-live="polite" hidden></div>
               <input
                 type="text"
                 class="command-input"
@@ -47,6 +50,7 @@
               />
             </div>
           </div>
+          <input id="attachment-input" type="file" multiple hidden />
           <div class="dock-meta">
             <div class="dock-meta-left">
               <button class="model-chip" id="model-chip" title="Select model">
@@ -64,6 +68,9 @@
                 <span class="stream-stop-label" id="stream-stop-label">working</span>
                 <kbd class="stream-stop-esc">esc</kbd>
               </button>
+              <div class="dock-workspace" title="Current workspace">
+                <span class="path" id="path">~</span>
+              </div>
               <!-- CONTEXT GAUGE -->
               <div class="ctx-status" id="ctx-status" data-state="ready" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" title="Context usage">
                 <svg class="ctx-gauge-svg" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
@@ -71,17 +78,16 @@
                   <circle class="ctx-gauge-fill" id="ctx-gauge-fill" cx="12" cy="12" r="8.5" />
                 </svg>
                 <span class="ctx-ring" id="ctx-fill" aria-hidden="true" style="display:none;"></span>
-                <span class="ctx-pct" id="ctx-pct">0%</span>
               </div>
             </div>
           </div>
         </div>
       </footer>
 
-      <!-- SUGGEST PANEL — komut önerileri -->
+      <!-- Slash-command suggestions -->
       <div class="suggest-panel" id="suggest-panel" style="display: none;"></div>
 
-      <!-- MODAL — model/provider/mod seçimi -->
+      <!-- Shared model/provider/mode selection surface -->
       <div class="modal" id="modal" role="dialog" aria-modal="true" aria-label="Selection menu" style="display: none;">
         <div class="modal-window">
           <div class="modal-search">
@@ -105,7 +111,7 @@
         </div>
       </div>
 
-      <!-- SESSION STATUS — konuşma geçmişine eklenmeyen sade durum menüsü -->
+      <!-- Session status stays outside the conversation transcript -->
       <div class="modal status-modal" id="status-modal" role="dialog" aria-modal="true" aria-labelledby="status-title" style="display: none;">
         <section class="modal-window status-window">
           <header class="status-header">
@@ -119,7 +125,7 @@
         </section>
       </div>
 
-      <!-- PROVIDER DIAGNOSTICS — oturum akışına yazılmayan sağlık görünümü -->
+      <!-- Provider health view stays outside the conversation transcript -->
       <div class="modal diagnostics-modal" id="diagnostics-modal" role="dialog" aria-modal="true" aria-labelledby="diagnostics-title" style="display: none;">
         <section class="modal-window diagnostics-window">
           <header class="diagnostics-header">
@@ -141,7 +147,7 @@
         </section>
       </div>
 
-      <!-- API MODAL — API key girişi -->
+      <!-- Provider credential entry -->
       <div class="modal" id="api-modal" style="display: none;">
         <div class="modal-window api-window">
           <div class="api-provider-title" id="api-provider-title"></div>
@@ -205,26 +211,17 @@
         </div>
       </div>
 
-      <!-- APPROVAL MODAL — tool izin onayı -->
-      <div class="modal" id="approval-modal" style="display: none;">
-        <div class="modal-window approval-window">
-          <div class="approval-header">
-            <span class="approval-tool" id="appr-tool"></span>
-            <span class="approval-risk" id="appr-risk"></span>
-          </div>
-          <div class="approval-detail" id="appr-detail"></div>
-          <div class="approval-edit" id="appr-edit" style="display: none;">
-            <textarea class="approval-edit-input" id="appr-edit-input" spellcheck="false" rows="4"></textarea>
-          </div>
-          <div class="approval-hint">
-            [y] approve · [a] for session · [p] always · [n] deny · [e] edit · [Esc] cancel
-          </div>
-        </div>
-      </div>
-
+      <!-- Composer-attached tool approval and plan review -->
       <!-- ERROR OVERLAY -->
       <div class="err-overlay" id="err-overlay" style="display: none;"></div>
       <div class="status-toast" id="status-toast" role="status" aria-live="polite" hidden></div>
+
+      <div class="window-menu" id="window-menu" role="menu" aria-label="Window controls" hidden>
+        <button type="button" role="menuitem" data-window-action="minimize">Minimize</button>
+        <button type="button" role="menuitem" data-window-action="toggle-maximize">Maximize / Restore</button>
+        <div class="window-menu-separator" role="separator"></div>
+        <button type="button" role="menuitem" data-window-action="close">Close</button>
+      </div>
     </div>
   </body>
 </html>

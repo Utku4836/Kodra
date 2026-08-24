@@ -7,9 +7,9 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use url::Url;
 
-/// Provider çağrılarının aynı TLS bağlantılarını yeniden kullanmasını sağlar.
-/// Timeout her Request üzerinde ayrıca uygulanır; bu nedenle farklı provider
-/// politikaları tek connection pool paylaşırken korunur.
+/// Reuses TLS connections across provider calls.
+/// Each request still applies its own timeout, preserving provider-specific
+/// policies while sharing one connection pool.
 fn shared_http_agent() -> &'static ureq::Agent {
     static HTTP_AGENT: OnceLock<ureq::Agent> = OnceLock::new();
     HTTP_AGENT.get_or_init(|| ureq::AgentBuilder::new().build())

@@ -1,40 +1,37 @@
-# Kodra 0.1.0
+# Kodra 0.2.0 release candidate
 
-Kodra 0.1.0 is the first public Windows release. It brings the full provider, tool, session, Markdown, diagnostics, and permission systems into one keyboard-first desktop interface.
+Kodra 0.2.0 makes the workspace quieter on the surface and more extensible underneath. Tool activity now reads as one compact timeline, the composer owns approvals and plans without opening a disconnected dialog, and three complete visual themes can be switched from the keyboard.
 
 ## Highlights
 
-- Connect OpenAI, Anthropic, Gemini, NVIDIA NIM, Groq, DeepSeek, Together AI, Fireworks AI, OpenRouter, Ollama, or a custom compatible server.
-- Work with native file, code-search, shell, web, browser, repository, and background-process tools.
-- Review risky actions before they run, with strict and autonomous modes available when needed.
-- Resume local conversations with their provider, model, context state, checkpoints, and usage intact.
-- Read responses as polished Markdown instead of raw terminal output.
-- Inspect provider health and session usage without adding diagnostic noise to the conversation.
+- Choose **Kodra**, **Mist**, or **Ember** with `/themes`. Mist uses native Windows acrylic with a readable translucent tint; all three themes cover menus, Markdown, activity, diffs, status, diagnostics, approvals, and plans.
+- Install validated local JSON themes without editing Kodra's source or exposing arbitrary CSS and scripts.
+- Use `/mode` to switch between Auto, Build, and Plan. Approval and plan reviews grow from the composer and keep focus in the current conversation.
+- Scan a simpler activity hierarchy: `Thinking` when reasoning is present and `Worked` otherwise, with aligned Read, Run, Edit, Write, Search, and other tool rows.
+- Attach only formats supported by the active model. Large code or text pastes become compact inline attachments while their complete content is preserved for the provider and session.
+- Extend slash commands, selection menus, themes, and tool presentation through documented registries with disposal and failure isolation.
+- Run stricter native permission checks. Strict mode asks before every tool; destructive commands remain blocked; critical paths cannot be bypassed by a saved allow rule.
+- Keep long transcripts responsive with bounded Markdown updates, paced response motion, frame-coalesced scrolling, and DOM virtualization.
 
-## Installation
+## Windows downloads
 
-The release produces two Windows installer formats, available on the [Releases page](https://github.com/Utku4836/Kodra/releases):
+The candidate release contains one installer and one portable application:
 
-- NSIS setup executable (`*-setup.exe`)
-- Windows Installer package (`*.msi`)
+- `Kodra_0.2.0_x64-setup.exe` — recommended current-user NSIS setup.
+- `Kodra_0.2.0_x64-portable.exe` — standalone executable using the same Kodra data and credential locations.
+- `SHA256SUMS.txt` and `release-manifest.json` — integrity metadata.
+- Source code ZIP and TAR archives — supplied automatically by GitHub.
 
-The installers are not code-signed yet. Windows may display a SmartScreen warning until a signing certificate is configured.
+MSI is no longer a release target. The portable build still requires Microsoft Edge WebView2 Runtime. Neither Windows binary is code-signed yet, so SmartScreen may warn on first launch.
 
-## First launch
+## Safety and local data
 
-Choose a provider and enter its API key. Credentials are stored in Windows Credential Manager. Ollama can be used without an API key when its local server is running.
+Provider credentials remain in Windows Credential Manager. Sessions, checkpoints, configuration, and user themes remain local and are preserved by upgrades and normal uninstall behavior. Theme files cannot execute code or access credentials.
 
-Type `/` to see the available commands. The default `smart` permission mode automatically allows reads and asks before writes or risky operations.
+## Known release gates
 
-## Known limitations
+- Code signing is not configured.
+- A clean Windows account or VM install, upgrade, and uninstall pass is still required before describing this candidate as production-ready.
+- Provider model catalogs, quotas, and rate-limit headers vary by provider and account tier; Kodra shows only data the provider actually returns.
 
-- Windows 10 and Windows 11 are the only tested targets for 0.1.0.
-- Browser automation expects Microsoft Edge to be installed.
-- Provider catalog quality, quotas, rate-limit headers, and tool support vary by provider and account tier.
-- Custom servers must expose an OpenAI-compatible chat and model API.
-- The app does not yet include an automatic updater.
-- The installers are not code-signed; SmartScreen may warn until a signing certificate is configured.
-
-## Upgrade notes
-
-This is the first packaged release, so there is no migration step. Existing development sessions use the same local session schema and are loaded automatically.
+This file is used by the manual draft workflow. The workflow creates a draft prerelease and never publishes it without an explicit maintainer action.

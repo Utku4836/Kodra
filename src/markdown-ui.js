@@ -109,6 +109,87 @@ renderer.renderer.rules.fence = (tokens, index) => {
   return `<pre data-language="${escapeHtml(language)}" data-meta="${escapeHtml(meta)}"><code class="language-${escapeHtml(language)}">${escapeHtml(token.content)}</code></pre>\n`;
 };
 
+function inlineDelimiterAt(line, index) {
+  const pair = line.slice(index, index + 2);
+  if (["**", "__", "~~"].includes(pair)) return pair;
+  if (line[index] === "*" || line[index] === "_") return line[index];
+  return "";
+}
+
+function stabilizeInlineMarkdown(source) {
+  const stack = [];
+  let inlineCode = "";
+  let fenced = null;
+  let sourceOffset = 0;
+  let hiddenTailStart = -1;
+
+  for (const segment of source.match(/.*(?:\n|$)/g) || []) {
+    if (!segment) continue;
+    const line = segment.endsWith("\n") ? segment.slice(0, -1) : segment;
+    const fenceMatch = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    if (fenceMatch) {
+      const marker = fenceMatch[1];
+      if (!fenced) {
+        fenced = { char: marker[0], length: marker.length };
+        stack.length = 0;
+        inlineCode = "";
+      } else if (marker[0] === fenced.char && marker.length >= fenced.length) {
+        fenced = null;
+      }
+      sourceOffset += segment.length;
+      continue;
+    }
+    if (fenced) {
+      sourceOffset += segment.length;
+      continue;
+    }
+
+    for (let index = 0; index < line.length;) {
+      if (line[index] === "\\") {
+        index += Math.min(2, line.length - index);
+        continue;
+      }
+
+      if (line[index] === "`") {
+        let end = index + 1;
+        while (line[end] === "`") end += 1;
+        const marker = line.slice(index, end);
+        if (!inlineCode) inlineCode = marker;
+        else if (marker.length === inlineCode.length) inlineCode = "";
+        index = end;
+        continue;
+      }
+      if (inlineCode) {
+        index += 1;
+        continue;
+      }
+
+      const marker = inlineDelimiterAt(line, index);
+      if (!marker) {
+        index += 1;
+        continue;
+      }
+      const previous = line[index - 1] || "";
+      const next = line[index + marker.length] || "";
+      const canClose = Boolean(previous) && !/\s/.test(previous);
+      const canOpen = Boolean(next) && !/\s/.test(next)
+        && !(marker === "_" && /[\p{L}\p{N}]/u.test(previous) && /[\p{L}\p{N}]/u.test(next));
+      if (stack.at(-1) === marker && canClose) stack.pop();
+      else if (canOpen) stack.push(marker);
+      else if (!next && marker.length > 1 && !canClose) hiddenTailStart = sourceOffset + index;
+      index += marker.length;
+    }
+    sourceOffset += segment.length;
+  }
+
+  const visibleSource = hiddenTailStart >= 0 ? source.slice(0, hiddenTailStart) : source;
+  const closers = [inlineCode, ...stack.slice().reverse()].filter(Boolean).join("");
+  return {
+    text: visibleSource + closers,
+    incomplete: hiddenTailStart >= 0 || Boolean(inlineCode) || stack.length > 0,
+  };
+}
+
 export function stabilizeMarkdown(value, streaming = false) {
   const source = String(value || "").replace(/\r\n?/g, "\n");
   const fencePattern = /^( {0,3})(`{3,}|~{3,})([^\n]*)$/gm;
@@ -119,9 +200,10 @@ export function stabilizeMarkdown(value, streaming = false) {
     if (!open) open = { char: marker[0], length: marker.length };
     else if (marker[0] === open.char && marker.length >= open.length) open = null;
   }
-  if (!open) return { text: source, incomplete: false };
+  const inline = streaming ? stabilizeInlineMarkdown(source) : { text: source, incomplete: false };
+  if (!open) return { text: inline.text, incomplete: inline.incomplete };
   return {
-    text: `${source}${source.endsWith("\n") ? "" : "\n"}${open.char.repeat(open.length)}\n`,
+    text: `${inline.text}${inline.text.endsWith("\n") ? "" : "\n"}${open.char.repeat(open.length)}\n`,
     incomplete: streaming,
   };
 }
@@ -335,9 +417,11 @@ function enhanceCodeBlocks(root, actions) {
     const meta = String(pre.dataset.meta || "").trim();
     const lineCount = source ? source.replace(/\n$/, "").split("\n").length : 0;
     const isDiff = language === "diff" || /^(?:diff --git|--- .+\n\+\+\+ )/m.test(source);
+    const isCompactCommand = ["shell", "powershell", "cmd", "bat"].includes(language) && lineCount <= 4;
 
     const figure = documentRef.createElement("figure");
-    figure.className = `md-code-block${isDiff ? " md-code-diff" : ""}`;
+    figure.className = `md-code-block${isDiff ? " md-code-diff" : ""}${isCompactCommand ? " md-code-command" : ""}`;
+    figure.dataset.lines = String(lineCount);
     const header = documentRef.createElement("div");
     header.className = "md-code-header";
     const identity = documentRef.createElement("div");
@@ -538,12 +622,196 @@ export function renderMarkdownInto(root, value, options = {}) {
     root.classList.toggle("md-incomplete", prepared.incomplete);
     root.classList.remove("md-render-fallback");
     enhanceMarkdown(root, options.actions || {});
+    if (options.streaming) {
+      root.querySelectorAll("button").forEach((button) => {
+        button.disabled = true;
+        button.setAttribute("aria-disabled", "true");
+      });
+      root.querySelectorAll("a").forEach((anchor) => {
+        anchor.removeAttribute("href");
+        anchor.tabIndex = -1;
+        anchor.setAttribute("aria-disabled", "true");
+      });
+      root.querySelectorAll('[role="checkbox"]').forEach((checkbox) => {
+        checkbox.tabIndex = -1;
+        checkbox.setAttribute("aria-disabled", "true");
+      });
+    }
   } catch (error) {
     root.textContent = String(value || "");
     root.classList.add("md-render-fallback");
     options.actions?.notify?.("Markdown was displayed as safe plain text");
   }
   return root;
+}
+
+function stableMarkdownBoundaries(value) {
+  const source = String(value || "");
+  const boundaries = [];
+  let fence = null;
+  let offset = 0;
+  for (const segment of source.match(/.*(?:\n|$)/g) || []) {
+    if (!segment) continue;
+    const hasNewline = segment.endsWith("\n");
+    const line = hasNewline ? segment.slice(0, -1) : segment;
+    const fenceMatch = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    if (fenceMatch) {
+      const marker = fenceMatch[1];
+      if (!fence) fence = { char: marker[0], length: marker.length };
+      else if (marker[0] === fence.char && marker.length >= fence.length) {
+        fence = null;
+        if (hasNewline) boundaries.push(offset + segment.length);
+      }
+    } else if (!fence && hasNewline && !line.trim()) {
+      boundaries.push(offset + segment.length);
+    }
+    offset += segment.length;
+  }
+  return boundaries;
+}
+
+export function stableMarkdownBoundary(value) {
+  return stableMarkdownBoundaries(value).at(-1) || 0;
+}
+
+function liveStructureSignature(root) {
+  const blocks = Array.from(root.children).map((element) => element.tagName.toLowerCase()).join(",");
+  const inline = ["strong", "em", "code", "del, s", ".md-callout", ".md-code-block", ".md-table-wrap"]
+    .map((selector) => root.querySelectorAll(selector).length)
+    .join(":");
+  return `${blocks}|${inline}`;
+}
+
+/**
+ * Keeps completed Markdown blocks immutable while only re-rendering the active tail.
+ * This makes speculative inline formatting affordable during character-paced output.
+ */
+export function createStreamingMarkdownPresenter(root, options = {}) {
+  if (!root) throw new TypeError("A streaming Markdown root is required");
+  const documentRef = root.ownerDocument || globalThis.document;
+  const windowRef = documentRef.defaultView || globalThis.window;
+  const actions = options.actions || {};
+  const settled = documentRef.createElement("div");
+  const live = documentRef.createElement("div");
+  const announcer = documentRef.createElement("span");
+  settled.className = "md-stream-settled";
+  live.className = "md-stream-live";
+  announcer.className = "sr-only md-stream-announcer";
+  announcer.setAttribute("role", "status");
+  announcer.setAttribute("aria-live", "polite");
+  announcer.setAttribute("aria-atomic", "false");
+  root.classList.add("md-live-stream");
+  root.removeAttribute("aria-live");
+  root.replaceChildren(settled, live, announcer);
+
+  let source = "";
+  let committedOffset = 0;
+  let timer = 0;
+  let lastRenderedAt = 0;
+  let lastAnnouncedOffset = 0;
+  let lastSignature = "";
+  let renderCount = 0;
+  let committedBlocks = 0;
+  let structureTimer = 0;
+
+  const clock = () => windowRef?.performance?.now?.() || Date.now();
+  const clearTimer = () => {
+    if (!timer) return;
+    (windowRef?.clearTimeout || clearTimeout)(timer);
+    timer = 0;
+  };
+  const intervalFor = () => {
+    if (Number.isFinite(options.renderIntervalMs)) return Math.max(0, options.renderIntervalMs);
+    if (source.length > 6000) return 64;
+    if (source.length > 1800) return 46;
+    return 32;
+  };
+
+  const announceReadableBoundary = (force = false) => {
+    const pending = source.slice(lastAnnouncedOffset);
+    if (!pending) return;
+    if (!force && !/(?:[.!?]\s|\n)$/.test(pending)) return;
+    announcer.textContent = pending;
+    lastAnnouncedOffset = source.length;
+  };
+
+  const commitStableBlocks = () => {
+    const boundaries = stableMarkdownBoundaries(source);
+    for (const boundary of boundaries) {
+      if (boundary <= committedOffset) continue;
+      const blockSource = source.slice(committedOffset, boundary);
+      committedOffset = boundary;
+      if (!blockSource.trim()) continue;
+      const block = documentRef.createElement("div");
+      block.className = "md-stream-block md-stream-block-settled";
+      renderMarkdownInto(block, blockSource, { actions });
+      settled.appendChild(block);
+      committedBlocks += 1;
+    }
+  };
+
+  const renderNow = () => {
+    clearTimer();
+    commitStableBlocks();
+    const activeSource = source.slice(committedOffset);
+    if (activeSource) renderMarkdownInto(live, activeSource, { actions, streaming: true });
+    else live.replaceChildren();
+    const signature = liveStructureSignature(live);
+    if (lastSignature && signature && signature !== lastSignature) {
+      live.classList.remove("md-stream-structure-enter");
+      void live.offsetWidth;
+      live.classList.add("md-stream-structure-enter");
+      if (structureTimer) (windowRef?.clearTimeout || clearTimeout)(structureTimer);
+      structureTimer = (windowRef?.setTimeout || setTimeout)(
+        () => live.classList.remove("md-stream-structure-enter"),
+        150,
+      );
+    }
+    lastSignature = signature;
+    renderCount += 1;
+    lastRenderedAt = clock();
+    announceReadableBoundary(false);
+    options.onRender?.();
+  };
+
+  const schedule = () => {
+    if (timer) return;
+    const delay = Math.max(0, intervalFor() - (clock() - lastRenderedAt));
+    if (delay === 0) {
+      renderNow();
+      return;
+    }
+    timer = (windowRef?.setTimeout || setTimeout)(renderNow, delay);
+  };
+
+  return {
+    update(value) {
+      const next = String(value || "");
+      if (next.length < source.length || !next.startsWith(source)) {
+        source = next;
+        committedOffset = 0;
+        settled.replaceChildren();
+        lastSignature = "";
+        committedBlocks = 0;
+      } else {
+        source = next;
+      }
+      schedule();
+    },
+    flush(value = source) {
+      source = String(value || "");
+      renderNow();
+      announceReadableBoundary(true);
+      return root;
+    },
+    destroy() {
+      clearTimer();
+      if (structureTimer) (windowRef?.clearTimeout || clearTimeout)(structureTimer);
+    },
+    get metrics() {
+      return { renderCount, committedBlocks, sourceLength: source.length, committedOffset };
+    },
+  };
 }
 
 export function renderMarkdownHtml(value, documentRef = globalThis.document) {

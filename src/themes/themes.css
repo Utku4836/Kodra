@@ -1,0 +1,193 @@
+/* Theme contract v1. Structural layout stays in styles.css/markdown-ui.css. */
+:root {
+  --text-main: var(--theme-text-primary, #ededed);
+  --text-muted: var(--theme-text-muted, #666666);
+  --text-dim: var(--theme-text-dim, #858c95);
+  --ok: var(--theme-state-success, #79bd94);
+  --err: var(--theme-state-danger, #cf7f85);
+  --amber: var(--theme-state-warning, #d2ac6d);
+  --glass: var(--theme-surface-soft, rgba(255, 255, 255, 0.018));
+  --glass-hover: var(--theme-surface-hover, rgba(255, 255, 255, 0.024));
+  --glass-surface: var(--theme-surface-soft, rgba(255, 255, 255, 0.018));
+  --glass-surface-hover: var(--theme-surface-hover, rgba(255, 255, 255, 0.024));
+  --glass-border: var(--theme-border-normal, rgba(255, 255, 255, 0.105));
+  --glass-border-bright: var(--theme-border-focus, rgba(255, 255, 255, 0.34));
+  --panel-black: var(--theme-surface-panel, #050607);
+  --panel-black-soft: var(--theme-surface-raised, rgba(3, 4, 5, 0.97));
+  --border-card: var(--theme-border-subtle, rgba(255, 255, 255, 0.055));
+  --border-hover: var(--theme-border-normal, rgba(255, 255, 255, 0.105));
+  --conversation-font-size: var(--theme-font-responseSize, 15px);
+  --conversation-line-height: var(--theme-font-responseLineHeight, 1.62);
+}
+
+html,
+body {
+  background: var(--theme-native-background, #000000);
+}
+
+body {
+  color: var(--theme-text-primary, #ededed);
+  transition: background-color var(--motion-fast) var(--motion-enter), color var(--motion-fast) ease;
+}
+
+.app {
+  isolation: isolate;
+  background: var(--theme-canvas-background, #000000);
+  box-shadow: var(--theme-shadow-window, none);
+  backdrop-filter: blur(var(--theme-glass-blur, 0px)) saturate(var(--theme-glass-saturation, 100%));
+  -webkit-backdrop-filter: blur(var(--theme-glass-blur, 0px)) saturate(var(--theme-glass-saturation, 100%));
+  transition: background-color var(--motion-fast) var(--motion-enter), box-shadow var(--motion-fast) ease;
+}
+
+.app::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--theme-canvas-ambient, transparent);
+  box-shadow: inset 0 1px 0 var(--theme-glass-highlight, transparent);
+}
+
+::selection {
+  background: var(--theme-selection-background, rgba(137, 180, 208, 0.2));
+}
+
+.connection-state { color: var(--theme-state-offline, #e06d75); }
+.path,
+.dock-workspace,
+.activity-time,
+.activity-meta-key { color: var(--theme-text-muted, #666666); }
+.user-block { color: var(--theme-text-user, #9aa0a8); }
+.user-block::before { color: var(--theme-text-dim, #858c95); }
+.assistant-response,
+.streaming-message { color: var(--theme-text-response, #e6e8eb); }
+
+.bottom-bar {
+  background: linear-gradient(to top, var(--theme-canvas-background, #000000) 76%, transparent);
+}
+
+.command-dock,
+.composer-panel,
+.suggest-panel,
+.modal-window,
+.window-menu {
+  background: var(--theme-surface-raised, rgba(3, 4, 5, 0.97));
+  border-color: var(--theme-border-subtle, rgba(255, 255, 255, 0.055));
+  box-shadow: var(--theme-shadow-panel, 0 28px 80px rgba(0, 0, 0, 0.68));
+  backdrop-filter: blur(var(--theme-glass-blur, 0px)) saturate(var(--theme-glass-saturation, 100%));
+  -webkit-backdrop-filter: blur(var(--theme-glass-blur, 0px)) saturate(var(--theme-glass-saturation, 100%));
+}
+
+.composer-panel::after { background: var(--theme-border-subtle, rgba(255, 255, 255, 0.055)); }
+.modal { background: var(--theme-overlay-scrim, rgba(0, 0, 0, 0.76)); }
+.modal-search { background: var(--theme-surface-inset, rgba(0, 0, 0, 0.34)); }
+.modal-search-input,
+.command-input,
+.composer-feedback { color: var(--theme-text-primary, #ededed); caret-color: var(--theme-accent-primary, #dce8f0); }
+.modal-search-input::placeholder,
+.command-input::placeholder,
+.composer-feedback::placeholder { color: var(--theme-text-muted, #666666); }
+
+.modal-category,
+.provider-item-state,
+.session-meta { color: var(--theme-text-dim, #858c95); }
+
+.modal-item,
+.suggest-item { color: var(--theme-text-secondary, #abb0b7); }
+.modal-item:hover:not(.active),
+.suggest-item:hover:not(.active) {
+  color: var(--theme-text-primary, #ededed);
+  background: var(--theme-surface-hover, rgba(255, 255, 255, 0.024));
+}
+.modal-list[data-input-owner="keyboard"] .modal-item:hover:not(.active),
+.suggest-panel[data-input-owner="keyboard"] .suggest-item:hover:not(.active) {
+  color: var(--theme-text-secondary, #abb0b7);
+  background: transparent;
+}
+.modal-item.active,
+.suggest-item.active {
+  color: var(--theme-text-primary, #ededed);
+  background: linear-gradient(90deg, var(--theme-surface-selected, rgba(255, 255, 255, 0.038)), transparent 78%);
+}
+.menu-selection-chevron { color: var(--theme-accent-primary, #dce8f0); }
+
+.activity-group > .activity-group-trigger .activity-label,
+.activity-target,
+.activity-thinking-content { color: var(--theme-text-dim, #858c95); }
+.activity-label,
+.activity-group-trigger:hover .activity-label,
+.activity-entry-trigger:hover .activity-label { color: var(--theme-text-secondary, #abb0b7); }
+.activity-status { color: var(--theme-text-dim, #858c95); }
+.activity-entry[data-status="err"] > .activity-entry-trigger .activity-label,
+.activity-group[data-status="err"] > .activity-group-trigger .activity-label { color: var(--theme-state-danger, #cf7f85); }
+.activity-list::before,
+.activity-thinking-divider { background: var(--theme-border-subtle, rgba(255, 255, 255, 0.055)); }
+.activity-group-trigger:focus-visible,
+.activity-entry-trigger:focus-visible { box-shadow: var(--theme-shadow-focus, 0 0 0 1px rgba(255, 255, 255, 0.17)); }
+
+.composer-panel-title,
+.composer-action,
+.plan-review-list li { color: var(--theme-text-primary, #ededed); }
+.plan-rationale { color: var(--theme-text-secondary, #abb0b7); }
+.composer-action { border-color: var(--theme-border-subtle, rgba(255, 255, 255, 0.055)); }
+.composer-action:hover,
+.composer-action-primary { background: var(--theme-surface-selected, rgba(255, 255, 255, 0.038)); }
+
+.rich-message a { color: var(--theme-text-link, #9ec8e5); }
+.rich-message :not(pre) > code { background: var(--theme-code-inlineBackground, rgba(255, 255, 255, 0.055)); color: var(--theme-code-text, #d9dde1); }
+.rich-message pre,
+.code-block { background: var(--theme-code-background, rgba(255, 255, 255, 0.025)); border-color: var(--theme-border-subtle, rgba(255, 255, 255, 0.055)); }
+.rich-message pre code,
+.code-block code { color: var(--theme-code-text, #d9dde1); }
+
+.tool-diff,
+.activity-output pre,
+.dir-grid { background: var(--theme-code-background, rgba(255, 255, 255, 0.025)); border-color: var(--theme-border-subtle, rgba(255, 255, 255, 0.055)); }
+.diff-add { background: var(--theme-diff-addBackground, rgba(65, 128, 85, 0.12)); color: var(--theme-diff-addText, #91c5a0); }
+.diff-del { background: var(--theme-diff-deleteBackground, rgba(144, 61, 70, 0.12)); color: var(--theme-diff-deleteText, #d0959a); }
+.diff-hunk { color: var(--theme-diff-hunk, #8294a7); }
+
+.status-window,
+.diagnostics-window,
+.confirm-window,
+.api-window { background: var(--theme-surface-panel, #050607); }
+.status-close:focus-visible,
+.diagnostics-actions button:focus-visible,
+.confirm-button:focus-visible,
+.composer-action:focus-visible { box-shadow: var(--theme-shadow-focus, 0 0 0 1px rgba(255, 255, 255, 0.17)); }
+
+#modal[data-mode="themes"] .modal-window {
+  width: min(430px, calc(100% - 64px));
+  max-height: min(52%, 360px);
+}
+#modal[data-mode="themes"] .modal-search { display: none; }
+#modal[data-mode="themes"] .modal-list { padding: 12px 16px 16px; outline: none; }
+.theme-item { display: flex; align-items: center; }
+
+html[data-theme="mist"] .app {
+  border: 1px solid var(--theme-border-subtle);
+}
+
+html[data-theme="mist"] .command-dock,
+html[data-theme="mist"] .composer-panel,
+html[data-theme="mist"] .suggest-panel,
+html[data-theme="mist"] .modal-window {
+  box-shadow: var(--theme-shadow-panel);
+}
+
+html[data-theme="ember"] .menu-selection-chevron,
+html[data-theme="ember"] .user-block::before,
+html[data-theme="ember"] .rich-message a { color: var(--theme-accent-primary); }
+
+@media (forced-colors: active) {
+  .app,
+  .command-dock,
+  .composer-panel,
+  .suggest-panel,
+  .modal-window {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    forced-color-adjust: auto;
+  }
+}

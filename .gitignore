@@ -1,6 +1,7 @@
 # Node
 node_modules/
 dist/
+release-artifacts/
 
 # Rust / Tauri
 src-tauri/target/
