@@ -5,6 +5,7 @@ import {
   createFrameCoalescer,
 } from "../src/performance-runtime.js";
 import { createMotionRuntime, createSelectionController } from "../src/ui-motion.js";
+import { createStreamingMarkdownPresenter } from "../src/markdown-ui.js";
 import { createTranscriptVirtualizer } from "../src/transcript-virtualizer.js";
 
 function percentile(samples, ratio) {
@@ -128,10 +129,35 @@ function measureTranscriptVirtualization(items = 1000) {
   return result;
 }
 
+function measureStreamingMarkdown(characters = 12_000, updates = 400) {
+  const dom = new JSDOM("<!doctype html><body><article id='response' class='rich-message'></article></body>");
+  const root = dom.window.document.getElementById("response");
+  const paragraph = "## Live response\n\nA **formatted** paragraph with `inline code` and a stable rhythm.\n\n- one\n- two\n\n";
+  const source = paragraph.repeat(Math.ceil(characters / paragraph.length)).slice(0, characters);
+  const presenter = createStreamingMarkdownPresenter(root, { renderIntervalMs: 40 });
+  const start = performance.now();
+  for (let index = 1; index <= updates; index += 1) {
+    presenter.update(source.slice(0, Math.ceil(source.length * index / updates)));
+  }
+  presenter.flush(source);
+  const totalMs = performance.now() - start;
+  const result = {
+    characters: source.length,
+    updates,
+    renders: presenter.metrics.renderCount,
+    committedBlocks: presenter.metrics.committedBlocks,
+    totalMs: Number(totalMs.toFixed(2)),
+  };
+  presenter.destroy();
+  dom.window.close();
+  return result;
+}
+
 console.log(JSON.stringify({
   environment: "jsdom-structural (GPU/FPS ölçümü değildir)",
   longSessionMount: measureLongSessionMount(),
   eventCoalescing: measureEventCoalescing(),
   menuRetargeting: measureMenuRetargeting(),
   transcriptVirtualization: measureTranscriptVirtualization(),
+  streamingMarkdown: measureStreamingMarkdown(),
 }, null, 2));

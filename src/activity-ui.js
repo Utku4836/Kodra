@@ -2,18 +2,6 @@ import { toolDetailRows, toolIcon, toolLabel, toolTarget } from "./tool-renderer
 
 export { toolDetailRows, toolLabel, toolTarget } from "./tool-renderers.js";
 
-const SUMMARY_GROUPS = Object.freeze([
-  { ids: ["write_file", "edit_file", "create_dir", "apply_diff", "delete_file"], one: "Edited a file", many: "Edited files" },
-  { ids: ["read_file", "list_dir", "analyze_codebase"], one: "Read a file", many: "Read files" },
-  { ids: ["search_code", "glob_files"], one: "Searched code", many: "Searched code" },
-  { ids: ["execute_command", "manage_background_process"], one: "Ran a command", many: "Ran commands" },
-  { ids: ["web_fetch"], one: "Browsed the web", many: "Browsed the web" },
-  { ids: ["browser_automation"], one: "Used the browser", many: "Used the browser" },
-  { ids: ["github_action"], one: "Updated GitHub", many: "Updated GitHub" },
-  { ids: ["manage_memory"], one: "Updated memory", many: "Updated memory" },
-  { ids: ["spawn_sub_agent"], one: "Delegated a task", many: "Delegated tasks" },
-]);
-
 let disclosureId = 0;
 
 function normalizeStatus(status) {
@@ -21,24 +9,10 @@ function normalizeStatus(status) {
   return ["run", "ok", "err"].includes(status) ? status : "run";
 }
 
-export function activitySummary(toolIds = [], thinkingCount = 0) {
-  const source = Array.isArray(toolIds) ? toolIds.filter(Boolean) : [];
-  if (!source.length) return thinkingCount > 0 ? "Thought" : "Worked";
-
-  const matched = new Set();
-  const phrases = [];
-  for (const group of SUMMARY_GROUPS) {
-    const count = source.filter((toolId) => group.ids.includes(toolId)).length;
-    if (!count) continue;
-    source.filter((toolId) => group.ids.includes(toolId)).forEach((toolId) => matched.add(toolId));
-    phrases.push(count === 1 ? group.one : group.many);
-  }
-  const unmatched = source.filter((toolId) => !matched.has(toolId)).length;
-  if (unmatched) phrases.push(unmatched === 1 ? "Used a tool" : "Used tools");
-  if (phrases.length > 2) return `Used ${source.length} tools`;
-  return phrases.map((phrase, index) => index === 0
-    ? phrase
-    : phrase.charAt(0).toLowerCase() + phrase.slice(1)).join(", ");
+export function activitySummary(_toolIds = [], thinkingCount = 0) {
+  // The child rows already name every tool. Repeating them in the outer
+  // disclosure creates a noisy group → summary → tool hierarchy.
+  return thinkingCount > 0 ? "Thinking" : "Worked";
 }
 
 function createArrow(documentRef) {
@@ -277,9 +251,7 @@ export function createActivityGroup({
       setTime(value) {
         const next = String(value || "");
         entry.time.textContent = next;
-        const rows = toolDetailRows(toolId, params, detailShorten);
-        if (next) rows.push({ label: "Duration", value: next });
-        appendMetaRows(documentRef, meta, rows);
+        appendMetaRows(documentRef, meta, toolDetailRows(toolId, params, detailShorten));
       },
       setStatus(nextStatus) {
         setDisclosureStatus(entry, nextStatus, toolId);

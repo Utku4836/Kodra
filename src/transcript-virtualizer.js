@@ -1,9 +1,9 @@
 export const DEFAULT_VIRTUALIZATION_THRESHOLD = 80;
 
 function nodeSpacing(node) {
-  if (node.classList.contains("user-block")) return 14;
+  if (node.classList.contains("user-block")) return 20;
   if (node.classList.contains("activity-group")) return 20;
-  if (node.classList.contains("assistant-response")) return 24;
+  if (node.classList.contains("assistant-response")) return 20;
   if (node.classList.contains("log-line")) return 6;
   return 0;
 }
@@ -11,8 +11,8 @@ function nodeSpacing(node) {
 function estimatedHeight(node) {
   const textLength = String(node.textContent || "").length;
   if (node.classList.contains("activity-group")) return 52;
-  if (node.classList.contains("user-block")) return 42 + Math.floor(textLength / 90) * 22;
-  if (node.classList.contains("rich-message")) return 62 + Math.floor(textLength / 90) * 22;
+  if (node.classList.contains("user-block")) return 44 + Math.floor(textLength / 90) * 24;
+  if (node.classList.contains("rich-message")) return 64 + Math.floor(textLength / 90) * 24;
   return 32 + Math.floor(textLength / 100) * 20;
 }
 

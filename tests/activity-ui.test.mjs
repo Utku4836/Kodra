@@ -35,18 +35,17 @@ test("tool copy uses compact human verbs for running, completed, and failed stat
   assert.equal(toolLabel("custom_tool", "ok"), "Custom tool");
 });
 
-test("activity summary describes the actual work instead of using a generic card title", () => {
-  assert.equal(activitySummary([], 1), "Thought");
-  assert.equal(activitySummary(["read_file"]), "Read a file");
-  assert.equal(activitySummary(["read_file", "list_dir", "execute_command"]), "Read files, ran a command");
-  assert.equal(activitySummary(["edit_file", "execute_command", "web_fetch"]), "Used 3 tools");
+test("activity summary does not repeat tool rows in the outer disclosure", () => {
+  assert.equal(activitySummary([], 1), "Thinking");
+  assert.equal(activitySummary(["read_file"]), "Worked");
+  assert.equal(activitySummary(["read_file", "list_dir", "execute_command"], 1), "Thinking");
+  assert.equal(activitySummary(["edit_file", "execute_command", "web_fetch"]), "Worked");
 });
 
-test("tool summaries prefer the meaningful argument while detail rows keep raw identity", () => {
+test("tool summaries and detail rows keep only meaningful user-facing fields", () => {
   assert.equal(toolTarget("execute_command", { command: "npm test" }), "npm test");
   assert.equal(toolTarget("read_file", { path: "C:\\repo\\src\\main.js" }, (value) => value.replace("C:\\repo", "~")), "~\\src\\main.js");
   assert.deepEqual(toolDetailRows("search_code", { path: "src", pattern: "Thinking" }), [
-    { label: "Tool", value: "search_code" },
     { label: "Path", value: "src" },
     { label: "Query", value: "Thinking" },
   ]);
@@ -83,8 +82,9 @@ test("activity group is a nested keyboard disclosure with independent thinking a
   assert.equal(tool.panel.getAttribute("aria-label"), "Read details");
   assert.equal(tool.target.textContent, "~\\src\\main.js");
   assert.equal(tool.body.hidden, false);
-  assert.match(tool.panelInner.textContent, /read_file/);
-  assert.match(tool.panelInner.textContent, /0\.2s/);
+  assert.doesNotMatch(tool.panelInner.textContent, /read_file|Duration/);
+  assert.match(tool.panelInner.textContent, /main\.js/);
+  assert.equal(tool.time.textContent, "0.2s");
   assert.deepEqual(animations.map(({ kind }) => kind), ["group", "entry", "status", "entry", "status"]);
 
   groupButton.click();
@@ -105,7 +105,7 @@ test("completed activity keeps details collapsed and exposes a concise elapsed s
   const root = log.querySelector(".activity-group");
   assert.equal(root.dataset.status, "ok");
   assert.equal(root.getAttribute("aria-busy"), "false");
-  assert.equal(root.querySelector(".activity-label").textContent, "Ran a command");
+  assert.equal(root.querySelector(".activity-label").textContent, "Worked");
   assert.equal(root.querySelector(".activity-time").textContent, "6.4s");
   assert.equal(root.querySelector(".activity-group-trigger").getAttribute("aria-expanded"), "false");
 });
@@ -115,7 +115,7 @@ test("restored activity can omit an invented duration", () => {
   activity.addThinking("Saved reasoning").setComplete();
   activity.finish("ok", false);
   assert.equal(log.querySelector(".activity-time").textContent, "");
-  assert.equal(log.querySelector(".activity-group-trigger").getAttribute("aria-label"), "Thought. Show activity details");
+  assert.equal(log.querySelector(".activity-group-trigger").getAttribute("aria-label"), "Thinking. Show activity details");
 });
 
 test("main stream and session restore route provider reasoning and tools through activity groups", () => {

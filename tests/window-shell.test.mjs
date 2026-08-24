@@ -63,6 +63,21 @@ test("frameless shell removes traffic lights and keeps the user chevron in the s
   const css = fs.readFileSync(path.join(__dirname, "../src/styles.css"), "utf8");
   assert.doesNotMatch(html, /traffic-lights|btn-close|btn-min|btn-max/);
   assert.match(html, /bottom-bar[\s\S]*dock-workspace[\s\S]*id="path"/);
-  assert.match(css, /\.log\s*\{[^}]*padding-left:\s*26px/);
-  assert.match(css, /\.user-block::before\s*\{[^}]*left:\s*-26px/);
+  assert.doesNotMatch(html, /composer-mode-tab|attachment-menu|<div class="dock-workspace"[^>]*>\s*<svg/);
+  assert.match(html, /command-input-wrap[\s\S]*command-prompt[\s\S]*attachment-tray[\s\S]*cmd-input/);
+  assert.match(css, /--conversation-copy-inset:\s*26px/);
+  assert.match(css, /\.log\s*\{[^}]*padding-left:\s*var\(--conversation-copy-inset\)/);
+  assert.match(css, /\.user-block::before\s*\{[^}]*left:\s*calc\(var\(--conversation-copy-inset\) \* -1\)/);
+});
+
+test("input, user messages, and assistant copy share one conversation scale", () => {
+  const css = fs.readFileSync(path.join(__dirname, "../src/styles.css"), "utf8");
+  const markdownCss = fs.readFileSync(path.join(__dirname, "../src/markdown-ui.css"), "utf8");
+  assert.match(css, /--conversation-font-size:\s*15px/);
+  assert.match(css, /--conversation-line-height:\s*1\.62/);
+  assert.match(css, /\.user-block\s*\{[^}]*font-size:\s*var\(--conversation-font-size\)[^}]*line-height:\s*var\(--conversation-line-height\)/s);
+  assert.match(css, /\.log-line\s*\{[^}]*font-size:\s*var\(--conversation-font-size\)[^}]*line-height:\s*var\(--conversation-line-height\)/s);
+  assert.match(css, /\.command-input\s*\{[^}]*font-size:\s*var\(--conversation-font-size\)[^}]*line-height:\s*var\(--conversation-line-height\)/s);
+  assert.match(markdownCss, /\.rich-message\s*\{[^}]*font-size:\s*var\(--conversation-font-size\)[^}]*line-height:\s*var\(--conversation-line-height\)/s);
+  assert.match(css, /\.streaming-message\s*\{[^}]*margin:\s*2px 0 var\(--conversation-row-gap\)/s);
 });

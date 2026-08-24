@@ -83,3 +83,14 @@ test("thinking command opens the shared animated menu and writes the Tauri camel
   assert.doesNotMatch(main, /configCache\.thinking_mode\s*=/);
   assert.doesNotMatch(css, /\.thinking-ruler-wrap|\.ruler-major-col|\.ruler-minor-tick/);
 });
+
+test("composer mode is a dedicated Auto, Build, or Plan command instead of a Tab toggle", () => {
+  const main = fs.readFileSync(path.join(__dirname, "../src/main.js"), "utf8");
+  const html = fs.readFileSync(path.join(__dirname, "../src/index.html"), "utf8");
+  assert.match(main, /\{ id: "auto", name: "Auto" \}/);
+  assert.match(main, /\{ id: "build", name: "Build" \}/);
+  assert.match(main, /\{ id: "plan", name: "Plan" \}/);
+  assert.match(main, /openModal\("composer-mode"\)/);
+  assert.doesNotMatch(main, /composerWorkflow\?\.toggleMode\(\)/);
+  assert.doesNotMatch(html, /composer-mode-toggle/);
+});

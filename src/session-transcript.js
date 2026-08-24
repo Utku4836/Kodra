@@ -82,6 +82,12 @@ export function createTranscriptEntry(type, value = {}) {
     id: String(value.id || id(type)),
     type,
     text: boundedText(value.text),
+    attachments: boundedArray(value.attachments, 8).map((attachment) => ({
+      name: boundedText(attachment?.name, 180),
+      mimeType: boundedText(attachment?.mimeType, 100),
+      kind: boundedText(attachment?.kind, 20),
+      size: Math.max(0, Number(attachment?.size || 0)),
+    })),
     createdAt,
   };
 }
@@ -137,7 +143,7 @@ export function migrateMessagesToTranscript(messages = []) {
   for (const message of Array.isArray(messages) ? messages : []) {
     if (message?.role === "user") {
       finishActivity();
-      appendTranscriptEntry(transcript, createTranscriptEntry("user", { text: message.content }));
+      appendTranscriptEntry(transcript, createTranscriptEntry("user", { text: message.content, attachments: message.attachments }));
     } else if (message?.role === "assistant") {
       const toolCalls = Array.isArray(message.toolCalls) ? message.toolCalls : [];
       if (toolCalls.length || message.reasoningContent) {

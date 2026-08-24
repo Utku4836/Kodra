@@ -1,4 +1,4 @@
-import { renderMarkdownInto } from "./markdown-ui.js";
+import { createStreamingMarkdownPresenter, renderMarkdownInto } from "./markdown-ui.js";
 import { createResponseMotionController } from "./response-motion.js";
 import {
   createProviderObservation,
@@ -25,7 +25,7 @@ import {
   sampleRefreshRate,
 } from "./ui-motion.js";
 import { resolveThinkingMode, thinkingModesForModel } from "./thinking-modes.js";
-import { createActivityGroup, toolTarget } from "./activity-ui.js";
+import { createActivityGroup, toolLabel, toolTarget } from "./activity-ui.js";
 import { setDiffViewMode } from "./diff-viewer.js";
 import {
   renderToolApproval,
@@ -45,11 +45,39 @@ import {
 } from "./session-transcript.js";
 import { createTranscriptVirtualizer } from "./transcript-virtualizer.js";
 import { createWindowShell } from "./window-shell.js";
+import { createComposerWorkflow } from "./composer-workflow.js";
+import {
+  attachmentPolicy,
+  pastedContentDescriptor,
+  publicAttachment,
+  validateAttachment,
+} from "./attachment-support.js";
+import { THEME_STORAGE_KEY, themeRuntime } from "./themes/index.js";
+import { createUserThemeService } from "./features/themes/user-theme-service.js";
+import { CORE_COMMAND_DEFINITIONS, createCommandRegistry } from "./command-registry.js";
+import { CORE_MODAL_DEFINITIONS, createModalRegistry } from "./modal-registry.js";
+import { renderCoreModalRows } from "./features/modals/core-modal-renderers.js";
+import { KODRA_CONFIG, publicConfigSnapshot } from "./kodra.config.js";
+import {
+  compactThresholdFor,
+  contextLimitOf,
+  contextRatioOf,
+  defaultCompactionState,
+  defaultSessionUsage,
+  estimateTokens,
+  formatCompactNumber as fmtK,
+  normalizeSessionIntelligence,
+  turnCostUsd,
+  usableContextLimit,
+} from "./session-metrics.js";
+import { buildSystemPrompt } from "./system-prompt.js";
+
+themeRuntime.restore();
 
 const SYSTEM_REDUCED_MOTION = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches || false;
-const MOTION_PREFERENCE_KEY = "cli-ui-motion-preference";
+const MOTION_PREFERENCE_KEY = KODRA_CONFIG.preferences.motion;
 const storedMotionPreference = localStorage.getItem(MOTION_PREFERENCE_KEY);
-const motionProfile = resolveMotionPreference(SYSTEM_REDUCED_MOTION, storedMotionPreference, "full");
+const motionProfile = resolveMotionPreference(SYSTEM_REDUCED_MOTION, storedMotionPreference, KODRA_CONFIG.defaults.motion);
 const appMotionPreference = motionProfile.preference;
 if (!storedMotionPreference) localStorage.setItem(MOTION_PREFERENCE_KEY, appMotionPreference);
 const resolvedReducedMotion = motionProfile.reduced;
@@ -119,7 +147,7 @@ function showStatusToast(message) {
   clearTimeout(statusTimer);
   statusTimer = setTimeout(() => {
     void hideStatusToast(generation);
-  }, 3200);
+  }, KODRA_CONFIG.ui.statusToastMs);
 }
 
 function revealMenuContent(container, selector, options = {}) {
@@ -158,6 +186,21 @@ const tauriCore = window.__TAURI__?.core;
 const tauriWindow = window.__TAURI__?.window;
 const invoke = tauriCore?.invoke;
 const TauriChannel = tauriCore?.Channel;
+const userThemeService = createUserThemeService({
+  invoke,
+  runtime: themeRuntime,
+  storage: localStorage,
+  storageKey: THEME_STORAGE_KEY,
+  announce: showStatusToast,
+});
+globalThis.KodraThemes = Object.freeze({
+  list: () => themeRuntime.list(),
+  apply: (id) => themeRuntime.apply(id),
+  register: (definition) => themeRuntime.register(definition),
+  current: userThemeService.current,
+  reload: () => userThemeService.hydrate({ notify: true }),
+  openFolder: userThemeService.openDirectory,
+});
 
 const markdownActions = {
   notify: showStatusToast,
@@ -180,17 +223,35 @@ function mountMarkdown(element, text, options = {}) {
 
 const logEl = document.getElementById("log");
 const mainArea = document.querySelector(".main-area");
+const bottomBar = document.querySelector(".bottom-bar");
 let followOutput = true;
 let logRenderTarget = logEl;
 const transcriptVirtualizer = createTranscriptVirtualizer({
   container: logEl,
   scrollRoot: mainArea,
-  maxOperationsPerFrame: 6,
+  maxOperationsPerFrame: KODRA_CONFIG.ui.transcriptMountBudget,
 });
 const autoScrollScheduler = createFrameCoalescer(() => {
-  if (followOutput) mainArea.scrollTop = mainArea.scrollHeight;
+  if (followOutput) mainArea.scrollTop = Math.max(0, mainArea.scrollHeight - mainArea.clientHeight);
   transcriptVirtualizer.schedule();
 });
+
+if (bottomBar && typeof ResizeObserver !== "undefined") {
+  const composerResizeObserver = new ResizeObserver(() => {
+    const height = Math.ceil(bottomBar.getBoundingClientRect().height);
+    document.documentElement.style.setProperty("--composer-height", `${height}px`);
+    if (followOutput) autoScrollScheduler.schedule();
+  });
+  composerResizeObserver.observe(bottomBar);
+}
+
+if (logEl && typeof ResizeObserver !== "undefined") {
+  const logResizeObserver = new ResizeObserver(() => {
+    if (followOutput) autoScrollScheduler.schedule();
+    else transcriptVirtualizer.schedule();
+  });
+  logResizeObserver.observe(logEl);
+}
 
 function appendLogElement(element) {
   if (logRenderTarget === logEl) transcriptVirtualizer.append(element);
@@ -200,13 +261,13 @@ function appendLogElement(element) {
 
 if (mainArea) {
   mainArea.addEventListener("scroll", () => {
-    followOutput = mainArea.scrollTop >= mainArea.scrollHeight - mainArea.clientHeight - 48;
+    followOutput = mainArea.scrollTop >= mainArea.scrollHeight - mainArea.clientHeight - KODRA_CONFIG.ui.followOutputThresholdPx;
     transcriptVirtualizer.schedule();
   }, { passive: true });
 }
 
-const DIFF_VIEW_KEY = "kodra-diff-view";
-let preferredDiffView = localStorage.getItem(DIFF_VIEW_KEY) === "split" ? "split" : "unified";
+const DIFF_VIEW_KEY = KODRA_CONFIG.preferences.diffView;
+let preferredDiffView = localStorage.getItem(DIFF_VIEW_KEY) === "split" ? "split" : KODRA_CONFIG.defaults.diffView;
 document.addEventListener("click", (event) => {
   const button = event.target.closest?.("[data-diff-mode]");
   if (!button) return;
@@ -229,10 +290,27 @@ function logLine(text, cls) {
   return div;
 }
 
-function userBlock(text) {
+function userBlock(text, attachments = []) {
   const div = document.createElement("div");
   div.className = "user-block";
-  div.textContent = text;
+  if (attachments.length) {
+    const files = document.createElement("div");
+    files.className = "user-attachments";
+    attachments.forEach((attachment) => {
+      const chip = document.createElement("span");
+      chip.className = "user-attachment";
+      chip.textContent = attachment.name;
+      chip.title = attachment.name;
+      files.appendChild(chip);
+    });
+    div.appendChild(files);
+  }
+  if (String(text || "").length) {
+    const copy = document.createElement("div");
+    copy.className = "user-copy";
+    copy.textContent = text;
+    div.appendChild(copy);
+  }
   appendLogElement(div);
   autoScroll();
   return div;
@@ -292,7 +370,17 @@ async function transitionToFinalMarkdown(el, text) {
 
 function createTypewriterRenderer(el) {
   let finishing = null;
-  const motion = createResponseMotionController({ element: el, onScroll: autoScroll });
+  const liveMarkdown = createStreamingMarkdownPresenter(el, {
+    actions: markdownActions,
+    onRender: autoScroll,
+  });
+  const motion = createResponseMotionController({
+    element: el,
+    // The Markdown presenter already schedules one bottom pin after a real DOM
+    // update. A second per-character scroll callback caused visible vertical jitter.
+    onScroll: () => {},
+    onReveal: (visibleText) => liveMarkdown.update(stripEmojis(replacePaths(visibleText))),
+  });
 
   return {
     append(delta) {
@@ -302,7 +390,9 @@ function createTypewriterRenderer(el) {
       if (!finishing) {
         finishing = (async () => {
           const result = await motion.finish();
+          liveMarkdown.flush(stripEmojis(replacePaths(result.text)));
           await transitionToFinalMarkdown(el, result.text);
+          liveMarkdown.destroy();
           el.classList.remove("is-streaming", "is-typing");
           el.classList.add(cls);
           el.setAttribute("aria-busy", "false");
@@ -316,6 +406,7 @@ function createTypewriterRenderer(el) {
     },
     interrupt() {
       const result = motion.interrupt();
+      liveMarkdown.destroy();
       mountMarkdown(el, stripEmojis(replacePaths(result.text)), { streaming: true });
       el.classList.remove("is-streaming", "is-typing");
       el.classList.add("interrupted-response");
@@ -518,6 +609,8 @@ function upgradeProviderConfig(config) {
 let isInitialized = false;
 let providerNameCache = null;
 let configCache = null;
+const storedComposerMode = localStorage.getItem(KODRA_CONFIG.preferences.composerMode);
+let composerMode = ["auto", "build", "plan"].includes(storedComposerMode) ? storedComposerMode : KODRA_CONFIG.defaults.composerMode;
 
 const SECRET_CONFIG_FIELDS = new Set([
   "apikey",
@@ -952,16 +1045,16 @@ function updatePath(cwd) {
   if (/^\.[\\/]?$/.test(raw) && WORKSPACE_DIR) raw = WORKSPACE_DIR;
   const shortened = shortPath(raw).replace(/\\/g, "/");
   const parts = shortened.split("/").filter((part) => part && part !== "~");
-  const last = parts[parts.length - 1];
+  const tail = parts.slice(-2).join("/");
 
-  if (!last) {
+  if (!tail) {
     pathEl.textContent = "~";
   } else if (shortened.startsWith("~")) {
-    pathEl.textContent = "~/" + last;
+    pathEl.textContent = "~/" + tail;
   } else if (/^[A-Za-z]:/.test(shortened)) {
-    pathEl.textContent = last;
+    pathEl.textContent = tail;
   } else {
-    pathEl.textContent = "./" + last;
+    pathEl.textContent = "./" + tail;
   }
 
   pathEl.title = raw;
@@ -988,88 +1081,6 @@ function toolWorkingPath(toolId, params) {
 }
 
 // ===== CONTEXT MANAGER =====
-function contextLimitOf(config) {
-  const v = config && config.contextLimit ? Number(config.contextLimit) : 0;
-  return v >= 8000 && v <= 4000000 ? v : 131072;
-}
-
-function contextRatioOf(config) {
-  const r = config && config.contextRatio !== undefined ? Number(config.contextRatio) : NaN;
-  return !isNaN(r) && r > 0 && r <= 1 ? r : 0.8;
-}
-
-function outputReserveOf(config) {
-  const limit = contextLimitOf(config);
-  const configured = Number(config?.maxOutputTokens || 0);
-  const reserve = configured > 0 ? configured : 8192;
-  return Math.min(Math.floor(limit * 0.25), Math.max(2048, reserve));
-}
-
-function usableContextLimit(config) {
-  return Math.max(4096, contextLimitOf(config) - outputReserveOf(config));
-}
-
-function compactThresholdFor(config) {
-  return Math.floor(usableContextLimit(config) * contextRatioOf(config));
-}
-
-function estimateTokens(history) {
-  let total = 0;
-  for (const m of history) {
-    total += 4;
-    total += Math.ceil(String(m.content || "").length / 4);
-    if (m.toolCalls) total += Math.ceil(JSON.stringify(m.toolCalls).length / 4);
-    if (m.toolCallId) total += Math.ceil(String(m.toolCallId).length / 4);
-    if (m.reasoningContent) total += Math.ceil(String(m.reasoningContent).length / 4);
-  }
-  return total;
-}
-
-function fmtK(n) {
-  return n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n);
-}
-
-function defaultSessionUsage() {
-  return {
-    inputTokens: 0,
-    outputTokens: 0,
-    reasoningTokens: 0,
-    cachedTokens: 0,
-    totalTokens: 0,
-    currentContextTokens: 0,
-    apiCalls: 0,
-    source: "",
-    costUsd: null,
-    rateLimits: null,
-    lastRequest: null,
-  };
-}
-
-function defaultCompactionState() {
-  return {
-    autoEnabled: true,
-    threshold: 0.8,
-    summary: "",
-    compactedThrough: 0,
-    count: 0,
-    lastAt: null,
-    lastMode: null,
-    tokensBefore: 0,
-    tokensAfter: 0,
-    tokensSaved: 0,
-  };
-}
-
-function normalizeSessionIntelligence(record) {
-  if (!record) return record;
-  record.usage = { ...defaultSessionUsage(), ...(record.usage || {}) };
-  record.compaction = { ...defaultCompactionState(), ...(record.compaction || {}) };
-  record.compaction.autoEnabled = record.compaction.autoEnabled !== false;
-  const threshold = Number(record.compaction.threshold);
-  record.compaction.threshold = threshold >= 0.5 && threshold <= 0.95 ? threshold : 0.8;
-  return record;
-}
-
 function effectiveConversationHistory() {
   const state = currentSession?.compaction;
   if (!state?.summary || !Number.isInteger(state.compactedThrough) || state.compactedThrough <= 0) {
@@ -1086,28 +1097,9 @@ function effectiveConversationHistory() {
 
 function effectiveRequestHistory(config, homeDir) {
   return [
-    { role: "system", content: buildSystemPrompt(config, homeDir) },
+    { role: "system", content: buildSystemPrompt({ config, homeDir, composerMode }) },
     ...effectiveConversationHistory(),
   ];
-}
-
-function turnCostUsd(usage, config) {
-  if (config?.inputPricePerMillion === null || config?.inputPricePerMillion === undefined
-      || config?.outputPricePerMillion === null || config?.outputPricePerMillion === undefined) {
-    return null;
-  }
-  const inputPrice = Number(config?.inputPricePerMillion);
-  const outputPrice = Number(config?.outputPricePerMillion);
-  const hasCachedPrice = config?.cachedInputPricePerMillion !== null
-    && config?.cachedInputPricePerMillion !== undefined;
-  const cachedPriceValue = Number(config?.cachedInputPricePerMillion);
-  if (!Number.isFinite(inputPrice) || !Number.isFinite(outputPrice)) return null;
-  const input = Number(usage.inputTokens || 0);
-  const output = Number(usage.outputTokens || 0);
-  const cached = Math.min(input, Number(usage.cachedTokens || 0));
-  const uncached = Math.max(0, input - cached);
-  const cachedPrice = hasCachedPrice && Number.isFinite(cachedPriceValue) ? cachedPriceValue : inputPrice;
-  return ((uncached * inputPrice) + (cached * cachedPrice) + (output * outputPrice)) / 1_000_000;
 }
 
 function recordReplyUsage(reply, history, { updateContext = true } = {}) {
@@ -1279,71 +1271,27 @@ function updateCtxGauge(history = null, reply = null) {
   ctxStatus.setAttribute("aria-label", "Context " + Math.round(pct) + " percent");
 }
 
-// ===== SYSTEM PROMPT =====
-function buildSystemPrompt(config, homeDir) {
-  return (
-    "You are a terminal assistant operating on the user's computer. You call tools to read, write, search files, run commands, fetch web pages, manage processes, and delegate subtasks. Execute the user's request end-to-end like a senior developer.\n\n" +
-    "## Environment\n" +
-    "- OS: Windows — shell commands run through cmd; bash/Linux commands (ls, uname, pwd, $HOME, ~, 2>/dev/null) do NOT work.\n" +
-    "- Home directory: " + (homeDir || "(resolve at runtime)") +
-    "\n- Desktop is usually <home>\\Desktop, but may be redirected (e.g. OneDrive: <home>\\OneDrive\\Desktop). Discover the real location with list_dir — never guess.\n" +
-    "- Resolve all paths dynamically. If a path is unknown, verify it with list_dir before assuming.\n" +
-    "- NEVER probe for paths with shell commands (whoami, echo $HOME, powershell GetFolderPath, cd, dir) — use list_dir/read_file instead.\n\n" +
-    "## Identity\n" +
-    "- Your model identity is: " + config.model + ". State it verbatim when asked.\n" +
-    "- You are an agent, not a chatbot: complete tasks with tools, do not just discuss them.\n\n" +
-    "## Task Execution (To-Do Engine)\n" +
-    "- Break complex requests into logical steps and execute them in order.\n" +
-    "- Work on ONE step at a time. Do not attempt everything in a single tool call.\n" +
-    "- Keep the user informed briefly: what you are doing and why (1 short line per step).\n" +
-    "- Track progress mentally across turns — tool results are the ground truth of what has been done.\n" +
-    "- Short follow-ups (\"continue\", \"devam et\", \"fix it\", \"hatayı düzelt\") refer to the CURRENT task: resume from the last tool result, never restart from zero.\n\n" +
-    "## Auto-Plan Mode\n" +
-    "- Complex/multi-step tasks (3+ actions, file modifications, investigations): BEFORE acting, present a short numbered plan (2-5 steps) to the user, then execute it step by step.\n" +
-    "- Simple tasks (single read, quick answer): act immediately, no plan needed.\n" +
-    "- After completing all plan steps, close with a concise summary of what was done.\n\n" +
-    "## Mid-Flight Steering\n" +
-    "- If the user interrupts (\"dur\", \"stop\", \"bekle\", \"wait\", \"change\", \"değiştir\", new instructions): stop the current action chain immediately and follow the new direction. Do not finish the old plan first.\n" +
-    "- Preserve context from previous steps — the user expects continuity, not a fresh start.\n\n" +
-    "## Tool Usage Discipline\n" +
-    "- Choose the most specific tool for the job: read_file for content, list_dir for directory structure, search_code for locating symbols, web_fetch for web content, execute_command for shell operations.\n" +
-    "- NEVER use shell commands (curl, Invoke-WebRequest, Out-File, dir, type, ls) for file or web operations — always use the built-in tools.\n" +
-    "- Do not chain speculative attempts (trying ls, then echo, then find). Pick ONE correct approach and execute it.\n" +
-    "- Pass complete, correct parameters. Verify paths before destructive or write operations.\n" +
-    "- Do not call a tool when you already have the answer from previous results.\n" +
-    "- If a tool returns an error, correct your parameters and retry — retrying the same call is allowed and expected.\n\n" +
-    "## Error Handling & Self-Correction\n" +
-    "- Tool errors are normal: analyze the message (HTTP status, os error, missing path), fix the cause, retry with corrected parameters or a different tool.\n" +
-    "- NEVER abandon the task or send a greeting (\"Hello! How can I help?\") after an error.\n" +
-    "- If the same approach fails twice, change strategy entirely (different tool, different path, different command).\n\n" +
-    "## Verification & Quality\n" +
-    "- After write/edit/delete operations, verify the result (read_file or list_dir) before reporting success.\n" +
-    "- Do not report success based on assumption — confirm with tool output.\n" +
-    "- Finish with a short summary: what was done, what changed, and any follow-up needed.\n\n" +
-    "## Memory\n" +
-    "- Use manage_memory to persist important project facts (decisions, structures, learned gotchas) for future sessions.\n" +
-    "- Read memory before starting a task that seems related to previous work.\n" +
-    "- Memory keys should be short and semantic.\n\n" +
-    "## Sub-Agent Delegation\n" +
-    "- Use spawn_sub_agent for independent, well-scoped subtasks that do not need your current context (isolated research, long computations, separate concerns).\n" +
-    "- Keep the main task and context for yourself; delegate only what can stand alone.\n" +
-    "- Incorporate the sub-agent report into your final answer.\n\n" +
-    "## Safety & Guardrails\n" +
-    "- NEVER propose or run destructive commands (rm -rf, format, shutdown, diskpart, mkfs, Remove-Item -Recurse).\n" +
-    "- Be careful around sensitive paths (.env, .git, node_modules, system folders) — ask or avoid modifying them.\n" +
-    "- Respect permission prompts: if approval is required, wait; do not attempt to bypass it.\n\n" +
-    "## Communication\n" +
-    "- Respond in the same language the user writes in.\n" +
-    "- Be concise: short sentences, no filler. Use Markdown when it improves structure.\n" +
-    "- Before tool calls, write exactly one short progress sentence. Put file paths, commands, and identifiers in `backticks`; do not add emoji or a heading because the UI supplies the step marker. After presenting a plan, do not prefix later progress updates with Step, Adım, or another repeated number.\n" +
-    "- In final answers, use short headings, lists, bold labels, inline code, and code blocks only when they materially improve readability.\n" +
-    "- Plans and summaries: keep them clean and readable."
-  );
-}
-
 // ===== SUGGEST PANEL =====
 const suggestPanel = document.getElementById("suggest-panel");
-const COMMANDS = ["/model", "/thinking", "/provider", "/diagnostics", "/permissions", "/status", "/compact", "/sessions", "/resume", "/delete-session", "/new", "/undo", "/clear"];
+const commandRegistry = createCommandRegistry(CORE_COMMAND_DEFINITIONS);
+const modalRegistry = createModalRegistry(CORE_MODAL_DEFINITIONS);
+globalThis.KodraExtensions = Object.freeze({
+  version: 1,
+  config: publicConfigSnapshot(),
+  themes: globalThis.KodraThemes,
+  commands: Object.freeze({
+    list: () => commandRegistry.list(),
+    install: (definition) => commandRegistry.install(definition),
+  }),
+  modals: Object.freeze({
+    list: () => modalRegistry.list(),
+    install: (definition) => modalRegistry.install(definition),
+    open: (id, items = []) => {
+      modalAllItems = Array.isArray(items) ? [...items] : [];
+      openModal(id);
+    },
+  }),
+});
 let suggestMode = null;
 let suggestItems = [];
 let suggestIndex = 0;
@@ -1407,7 +1355,15 @@ function showSuggest(items, mode) {
   });
   suggestSelection.setRows(suggestRows);
   suggestSelection.moveTo(0, { immediate: true });
-  void suggestVisibility.open().then(() => {
+  const opening = suggestVisibility.open();
+  requestAnimationFrame(() => animateElementGroup(uiMotion, suggestRows, {
+    delay: 18,
+    stagger: 14,
+    distance: 6,
+    duration: UI_MOTION.fast,
+    maxItems: 9,
+  }));
+  void opening.then(() => {
     if (generation === suggestGeneration) suggestPanel.dataset.motionReady = "true";
   });
 }
@@ -1526,34 +1482,30 @@ function formatTokenCapacity(value) {
   return `${value} ctx`;
 }
 
-function renderModelItem(model) {
-  const el = document.createElement("div");
-  el.className = "modal-item model-item";
-  const name = document.createElement("span");
-  name.className = "model-name";
-  name.textContent = model.displayName || shortModelName(model.id);
-  el.appendChild(name);
-  el.title = model.id;
-  el.setAttribute("aria-label", `${name.textContent}, ${model.providerName || "model"}`);
-  return el;
-}
-
 function openModal(mode) {
+  const definition = modalRegistry.get(mode);
+  if (!definition) throw new Error(`Unknown modal: ${mode}`);
   modalCloseGeneration++;
   if (!modalVisibility.visible) modalReturnFocus = document.activeElement;
   modalMode = mode;
   modal.dataset.mode = mode;
-  modal.setAttribute("aria-label", mode === "thinking" ? "Thinking mode" : "Selection menu");
+  modal.setAttribute("aria-label", definition.ariaLabel);
   void modalVisibility.open();
   modalSearchInput.value = "";
   modalInputOwner.claimKeyboard();
   renderModalList(modalAllItems);
-  if (mode === "thinking") {
-    revealMenuContent(modalSurface, ".modal-category, .modal-item", { delay: 32, stagger: 24, distance: 6, maxItems: 8 });
+  if (definition.compact) {
+    revealMenuContent(modalSurface, ".modal-category, .modal-item", { delay: 24, stagger: 16, distance: 7, duration: UI_MOTION.fast, maxItems: 10 });
     modalList.focus({ preventScroll: true });
     requestAnimationFrame(() => modalList.focus({ preventScroll: true }));
   } else {
-    revealMenuContent(modalSurface, ".modal-search", { delay: 42, distance: 7, maxItems: 1 });
+    revealMenuContent(modalSurface, ".modal-search, .modal-category, .modal-item", {
+      delay: 22,
+      stagger: 15,
+      distance: 7,
+      duration: UI_MOTION.fast,
+      maxItems: 10,
+    });
     modalSearchInput.focus({ preventScroll: true });
     requestAnimationFrame(() => modalSearchInput.focus());
   }
@@ -1582,129 +1534,40 @@ function closeModal() {
 function renderModalList(items) {
   modalList.scrollTop = 0;
   modalList.innerHTML = "";
-  modalItems = [];
-  modalIndex = 0;
-  if (modalMode === "models") {
-    const groups = {};
-    items.forEach((it) => {
-      const key = it.providerName || "Modeller";
-      if (!groups[key]) groups[key] = [];
-      groups[key].push(it);
-    });
-    Object.keys(groups).sort((a, b) => a.localeCompare(b)).forEach((g) => {
-      const header = document.createElement("div");
-      header.className = "modal-category";
-      header.textContent = `${g}  ${groups[g].length}`;
-      modalList.appendChild(header);
-      groups[g].slice(0, 80).forEach((it) => {
-        const el = renderModelItem(it);
-        modalList.appendChild(el);
-        modalItems.push({ el, item: it });
-      });
-    });
-  } else if (modalMode === "thinking") {
-    const header = document.createElement("div");
-    header.className = "modal-category";
-    header.textContent = "Thinking";
-    modalList.appendChild(header);
-    const currentMode = resolveThinkingMode(items, configuredThinkingMode());
-    items.forEach((it, index) => {
-      const el = document.createElement("div");
-      el.className = "modal-item thinking-mode-item";
-      const isCurrent = it.id === currentMode.id;
-      if (isCurrent) {
-        el.classList.add("is-current");
-        modalIndex = index;
-      }
-      const label = document.createElement("span");
-      label.className = "thinking-mode-name";
-      label.textContent = it.label || it.id;
-      el.appendChild(label);
-      modalList.appendChild(el);
-      modalItems.push({ el, item: it });
-    });
-  } else if (modalMode === "diagnostics-providers") {
-    const header = document.createElement("div");
-    header.className = "modal-category";
-    header.textContent = "Provider to diagnose";
-    modalList.appendChild(header);
-    items.forEach((it) => {
-      const el = document.createElement("div");
-      el.className = "modal-item provider-item";
-      const title = document.createElement("span");
-      title.className = "provider-item-name";
-      title.textContent = it.name;
-      const meta = document.createElement("span");
-      meta.className = "provider-item-state";
-      const report = providerDiagnosticCache.get(it.id);
-      meta.dataset.state = report?.overall || "unknown";
-      meta.textContent = report ? diagnosticStateLabel(report.overall) : "Not checked yet";
-      el.append(title, meta);
-      modalList.appendChild(el);
-      modalItems.push({ el, item: it });
-    });
-  } else if (modalMode === "sessions" || modalMode === "delete-sessions") {
-    const header = document.createElement("div");
-    header.className = "modal-category";
-    header.textContent = modalMode === "delete-sessions" ? "Choose a conversation" : "Conversations";
-    modalList.appendChild(header);
-    items.forEach((it) => {
-      const el = document.createElement("div");
-      el.className = "modal-item session-item";
-      const title = document.createElement("span");
-      title.className = "session-title";
-      title.textContent = it.title;
-      const meta = document.createElement("span");
-      meta.className = "session-meta";
-      meta.textContent = shortModelName(it.model) + " · " + it.messageCount + (it.hasDraft ? " · draft" : "");
-      el.append(title, meta);
-      modalList.appendChild(el);
-      modalItems.push({ el, item: it });
-    });
-  } else if (modalMode === "mode") {
-    const header = document.createElement("div");
-    header.className = "modal-category";
-    header.textContent = "Access mode";
-    modalList.appendChild(header);
-    let connectedIdx = 0;
-    items.forEach((it, i) => {
-      const el = document.createElement("div");
-      el.className = "modal-item";
-      const isCurrent = configCache && configCache.mode === it.id;
-      el.textContent = it.name + (isCurrent ? "  ✓" : "");
-      if (isCurrent) connectedIdx = i;
-      modalList.appendChild(el);
-      modalItems.push({ el, item: it });
-    });
-    if (configCache) modalIndex = connectedIdx;
-  } else {
-    let connectedIdx = 0;
-    const linked = (configCache && configCache.providers && configCache.providers.length > 0)
-      ? configCache.providers.map((p) => p.id || p.provider)
-      : (configCache && hasProviderCredential(configCache, PROVIDER_REGISTRY[configCache.provider]) ? [configCache.provider] : []);
-    items.forEach((it, i) => {
-      const el = document.createElement("div");
-      el.className = "modal-item provider-item";
-      const isConnected = linked.includes(it.id);
-      const isActive = configCache && configCache.provider === it.id;
-      const label = document.createElement("span");
-      label.className = "provider-item-name";
-      label.textContent = it.name;
-      const indicator = document.createElement("span");
-      indicator.className = "provider-health-indicator";
-      const report = providerDiagnosticCache.get(it.id);
-      indicator.dataset.state = report?.overall || (isConnected ? "connected" : "unlinked");
-      indicator.setAttribute("aria-label", report
-        ? diagnosticStateLabel(report.overall)
-        : isConnected ? "Connected" : "Not connected");
-      if (isActive) indicator.classList.add("is-active");
-      el.append(label, indicator);
-      if (isActive) connectedIdx = i;
-      modalList.appendChild(el);
-      modalItems.push({ el, item: it });
-    });
-    if (configCache) modalIndex = connectedIdx;
+  const linkedProviderIds = (configCache?.providers?.length > 0)
+    ? configCache.providers.map((provider) => provider.id || provider.provider)
+    : (configCache && hasProviderCredential(configCache, PROVIDER_REGISTRY[configCache.provider])
+      ? [configCache.provider]
+      : []);
+  const context = {
+    shortModelName,
+    resolveThinkingMode,
+    configuredThinkingMode,
+    composerMode: composerWorkflow?.mode || composerMode,
+    currentThemeId: themeRuntime.current?.id || "kodra",
+    providerDiagnosticCache,
+    diagnosticStateLabel,
+    activeAccessMode: configCache?.mode || "",
+    activeProviderId: configCache?.provider || "",
+    linkedProviderIds,
+  };
+  const definition = modalRegistry.get(modalMode);
+  let rendered;
+  try {
+    rendered = definition?.render
+      ? definition.render({ mode: modalMode, items, documentRef: document, list: modalList, context })
+      : renderCoreModalRows({ mode: modalMode, items, documentRef: document, list: modalList, context });
+  } catch (error) {
+    modalList.replaceChildren();
+    const failure = document.createElement("div");
+    failure.className = "modal-empty";
+    failure.textContent = "This menu could not be rendered.";
+    modalList.appendChild(failure);
+    console.error("Modal renderer failed", error);
+    rendered = { rows: [], selectedIndex: 0 };
   }
+  modalItems = Array.isArray(rendered?.rows) ? rendered.rows : [];
+  modalIndex = Number.isInteger(rendered?.selectedIndex) ? rendered.selectedIndex : 0;
 
   modalList.setAttribute("role", "listbox");
   modalItems.forEach((row, index) => {
@@ -1776,8 +1639,14 @@ function transitionModalContent(mode, items, direction = 1) {
 }
 
 function filterModal() {
-  if (modalMode === "thinking") return;
+  const definition = modalRegistry.get(modalMode);
+  if (!definition?.searchable) return;
   const q = modalSearchInput.value.toLowerCase();
+  if (typeof definition.filter === "function") {
+    const filtered = definition.filter([...modalAllItems], q);
+    renderFilteredModal(Array.isArray(filtered) ? filtered : []);
+    return;
+  }
   if (!q) {
     renderFilteredModal(modalAllItems);
     return;
@@ -1812,11 +1681,25 @@ async function selectModalItem() {
   const row = modalItems[modalIndex];
   if (!row) return;
 
+  const customSelect = modalRegistry.get(modalMode)?.select;
+  if (customSelect) {
+    const shouldClose = await customSelect(Object.freeze({ item: row.item, index: modalIndex, mode: modalMode }));
+    if (shouldClose !== false) closeModal();
+    return;
+  }
+
   if (modalMode === "models") {
     await selectModel(row.item.providerId, row.item.id, row.item.displayName);
     closeModal();
   } else if (modalMode === "thinking") {
     await applyThinkingSelection(row.item.id);
+    closeModal();
+  } else if (modalMode === "composer-mode") {
+    composerWorkflow?.setMode(row.item.id);
+    closeModal();
+    showStatusToast(`${row.item.name} mode selected`);
+  } else if (modalMode === "themes") {
+    themeRuntime.apply(row.item.id);
     closeModal();
   } else if (modalMode === "sessions") {
     const id = row.item.id;
@@ -1857,7 +1740,8 @@ document.addEventListener("keydown", (ev) => {
   if (!modalMode) return;
   if (ev.target === cmdInput) return;
 
-  if (modalMode !== "thinking" && ev.target !== modalSearchInput) {
+  const compactMode = Boolean(modalRegistry.get(modalMode)?.compact);
+  if (!compactMode && ev.target !== modalSearchInput) {
     if (ev.key.length === 1 && !ev.ctrlKey && !ev.metaKey) {
       ev.preventDefault();
       modalSearchInput.value += ev.key;
@@ -1874,7 +1758,7 @@ document.addEventListener("keydown", (ev) => {
 
   if (moveModalSelection(ev.key)) {
     ev.preventDefault();
-  } else if (ev.key === "Enter" || (modalMode === "thinking" && ev.key === " ")) {
+  } else if (ev.key === "Enter" || (compactMode && ev.key === " ")) {
     ev.preventDefault();
     selectModalItem();
   } else if (ev.key === "Escape") {
@@ -2486,6 +2370,22 @@ function openModeMenu() {
   openModal("mode");
 }
 
+function openComposerModeMenu() {
+  modalAllItems = [
+    { id: "auto", name: "Auto" },
+    { id: "build", name: "Build" },
+    { id: "plan", name: "Plan" },
+  ];
+  openModal("composer-mode");
+}
+
+async function openThemeMenu() {
+  hideSuggest();
+  await userThemeService.hydrate();
+  modalAllItems = themeRuntime.list();
+  openModal("themes");
+}
+
 async function openSessionsMenu() {
   modalAllItems = await invoke("list_sessions");
   openModal("sessions");
@@ -2576,13 +2476,14 @@ document.addEventListener("keydown", (event) => {
 
 // ===== AUTCOMPLETE =====
 async function updateSuggestions() {
-  if (suggestMode === "models" || suggestMode === "providers" || suggestMode === "mode") return;
+  if (["models", "providers", "mode"].includes(suggestMode)) return;
   const v = cmdInput.value.trim();
   if (!v) { hideSuggest(); return; }
   if (!v.startsWith("/")) { hideSuggest(); return; }
   const lower = v.toLowerCase();
-  if (COMMANDS.includes(lower)) { hideSuggest(); return; }
-  const matches = COMMANDS.filter((c) => c.startsWith(lower) && c !== lower).sort();
+  const commandPaths = commandRegistry.paths();
+  if (commandPaths.includes(lower)) { hideSuggest(); return; }
+  const matches = commandPaths.filter((c) => c.startsWith(lower) && c !== lower).sort();
   if (matches.length > 0) showSuggest(matches, "commands");
   else hideSuggest();
 }
@@ -2590,6 +2491,9 @@ async function updateSuggestions() {
 const cmdInput = document.getElementById("cmd-input");
 const streamStop = document.getElementById("stream-stop");
 const streamActions = document.getElementById("stream-actions");
+const attachmentTrigger = document.getElementById("attachment-trigger");
+const attachmentInput = document.getElementById("attachment-input");
+const attachmentTray = document.getElementById("attachment-tray");
 let cmdHistory = [];
 let historyIdx = -1;
 let conversationHistory = [];
@@ -2600,7 +2504,127 @@ let activeStreamRenderer = null;
 let lastStreamSequence = 0;
 let checkpointTimer = null;
 let sessionSaveChain = Promise.resolve();
+let pendingAttachments = [];
+let composerWorkflow = null;
 
+function activeAttachmentPolicy() {
+  const provider = configCache?.provider || "";
+  const providerInfo = PROVIDER_REGISTRY[provider] || null;
+  const model = (modelCache?.items || []).find((item) =>
+    item.providerId === provider && item.id === configCache?.model
+  ) || null;
+  return attachmentPolicy({
+    provider,
+    protocol: configCache?.protocol || providerInfo?.protocol || "",
+    model,
+    providerInfo,
+  });
+}
+
+function renderAttachmentTray() {
+  if (!attachmentTray) return;
+  attachmentTray.hidden = pendingAttachments.length === 0;
+  attachmentTray.replaceChildren(...pendingAttachments.map((attachment, index) => {
+    const chip = document.createElement("span");
+    chip.className = "attachment-chip";
+    const name = document.createElement("span");
+    name.className = "attachment-chip-name";
+    name.textContent = attachment.name;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "attachment-chip-remove";
+    remove.dataset.removeAttachment = String(index);
+    remove.setAttribute("aria-label", `Remove ${attachment.name}`);
+    remove.textContent = "×";
+    chip.append(name, remove);
+    return chip;
+  }));
+  autoScroll();
+}
+
+function pendingAttachmentError() {
+  const policy = activeAttachmentPolicy();
+  if (pendingAttachments.some((item) => item.kind === "image") && !policy.images) {
+    return "The current model does not support the attached image.";
+  }
+  if (pendingAttachments.some((item) => item.kind === "document") && !policy.documents) {
+    return "The current provider protocol does not support the attached PDF.";
+  }
+  return "";
+}
+
+function fileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error(`Could not read ${file.name}`));
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function addSelectedAttachments(files) {
+  const policy = activeAttachmentPolicy();
+  for (const file of Array.from(files || [])) {
+    const validation = validateAttachment(file, policy, pendingAttachments);
+    if (!validation.ok) { showStatusToast(validation.reason); continue; }
+    try {
+      const attachment = {
+        name: file.name,
+        mimeType: file.type || (validation.kind === "text" ? "text/plain" : "application/octet-stream"),
+        kind: validation.kind,
+        size: file.size,
+      };
+      if (validation.kind === "text") attachment.text = await file.text();
+      else attachment.dataUrl = await fileAsDataUrl(file);
+      pendingAttachments.push(publicAttachment(attachment));
+    } catch (error) {
+      showStatusToast(safeError(error));
+    }
+  }
+  renderAttachmentTray();
+}
+
+function addPastedContent(value) {
+  const descriptor = pastedContentDescriptor(value);
+  if (!descriptor.attach) return false;
+  const file = {
+    name: descriptor.name,
+    type: "text/plain",
+    size: new Blob([descriptor.text]).size,
+  };
+  const validation = validateAttachment(file, activeAttachmentPolicy(), pendingAttachments);
+  if (!validation.ok) {
+    showStatusToast(validation.reason);
+    return true;
+  }
+  pendingAttachments.push(publicAttachment({
+    name: descriptor.name,
+    mimeType: "text/plain",
+    kind: "text",
+    size: file.size,
+    text: descriptor.text,
+  }));
+  renderAttachmentTray();
+  showStatusToast(`${descriptor.name} attached`);
+  return true;
+}
+
+attachmentTrigger?.addEventListener("click", () => {
+  attachmentInput.accept = activeAttachmentPolicy().accept;
+  attachmentInput.multiple = true;
+  attachmentInput.click();
+});
+attachmentInput?.addEventListener("change", async () => {
+  await addSelectedAttachments(attachmentInput.files);
+  attachmentInput.value = "";
+  cmdInput.focus();
+});
+attachmentTray?.addEventListener("click", (event) => {
+  const button = event.target.closest?.("button[data-remove-attachment]");
+  if (!button) return;
+  pendingAttachments.splice(Number(button.dataset.removeAttachment), 1);
+  renderAttachmentTray();
+});
 function requestId() {
   return "req-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
 }
@@ -2676,6 +2700,12 @@ function serializeCompactionMessages(messages) {
     if (message.toolCallId) lines.push(`toolCallId=${message.toolCallId}`);
     if (message.toolCalls?.length) lines.push("toolCalls=" + JSON.stringify(message.toolCalls));
     if (message.content) lines.push(String(message.content));
+    if (message.attachments?.length) {
+      lines.push("attachments=" + message.attachments.map((item) => `${item.kind}:${item.name}`).join(", "));
+      for (const item of message.attachments) {
+        if (item.kind === "text" && item.text) lines.push(`attached:${item.name}\n${String(item.text).slice(0, 12000)}`);
+      }
+    }
     if (message.reasoningContent) lines.push("reasoning=" + String(message.reasoningContent));
     return lines.join("\n");
   }).join("\n\n---\n\n");
@@ -3018,7 +3048,7 @@ function renderStructuredSession(record, transcript) {
   logRenderTarget = fragment;
   try {
     for (const entry of transcript) {
-      if (entry.type === "user") userBlock(entry.text || "");
+      if (entry.type === "user") userBlock(entry.text || "", entry.attachments || []);
       else if (entry.type === "assistant") completedRichMessage(entry.text || "", "assistant-response");
       else if (entry.type === "system") logLine(entry.text || "", "sys");
       else if (entry.type === "activity") {
@@ -3082,7 +3112,7 @@ function renderLegacySession(record) {
     for (const message of record.messages || []) {
       if (message.role === "user") {
         finishActivity();
-        userBlock(message.content || "");
+        userBlock(message.content || "", message.attachments || []);
       }
       else if (message.role === "assistant") {
         const calls = message.toolCalls || [];
@@ -3205,8 +3235,14 @@ document.addEventListener("keydown", (event) => {
 }, true);
 
 if (cmdInput) {
+  cmdInput.addEventListener("paste", (event) => {
+    const text = event.clipboardData?.getData("text/plain") || "";
+    if (!addPastedContent(text)) return;
+    event.preventDefault();
+  });
+
   cmdInput.addEventListener("keydown", async (ev) => {
-    if (suggestMode === "models" || suggestMode === "providers" || suggestMode === "mode") {
+    if (["models", "providers", "mode"].includes(suggestMode)) {
       if (moveSuggestSelection(ev.key)) {
         ev.preventDefault();
         return;
@@ -3226,7 +3262,7 @@ if (cmdInput) {
         const typed = cmdInput.value.trim().toLowerCase();
         const item = suggestItems[suggestIndex];
         hideSuggest();
-        if (typed.startsWith("/") && COMMANDS.includes(typed)) {
+        if (typed.startsWith("/") && commandRegistry.paths().includes(typed)) {
           cmdInput.value = "";
           await runCommand(typed);
           return;
@@ -3243,7 +3279,7 @@ if (cmdInput) {
     if (ev.key === "Enter") {
       ev.preventDefault();
       const cmd = cmdInput.value;
-      if (cmd.trim() === "") return;
+      if (cmd.trim() === "" && pendingAttachments.length === 0) return;
 
       if (cmd.trim().startsWith("/")) {
         cmdHistory.push(cmd);
@@ -3253,12 +3289,18 @@ if (cmdInput) {
         await runCommand(cmd);
         cmdInput.value = "";
       } else {
+        const attachmentError = pendingAttachmentError();
+        if (attachmentError) { showStatusToast(attachmentError); return; }
+        const attachments = pendingAttachments.map(publicAttachment);
         cmdHistory.push(cmd);
         historyIdx = -1;
         followOutput = true;
-        userBlock(cmd);
+        userBlock(cmd, attachments);
         cmdInput.value = "";
-        await sendChat(cmd);
+        pendingAttachments = [];
+        renderAttachmentTray();
+        const providerMessage = cmd || "Please review the attached content.";
+        await sendChat(providerMessage, attachments, cmd);
       }
     } else if (ev.key === "ArrowUp") {
       ev.preventDefault();
@@ -3311,12 +3353,11 @@ const TOOL_RISKS = {
   read_file: "low", list_dir: "low", search_code: "low", glob_files: "low", web_fetch: "low", analyze_codebase: "low",
   write_file: "medium", edit_file: "medium", create_dir: "medium", apply_diff: "medium", manage_memory: "medium", browser_automation: "medium", spawn_sub_agent: "medium",
   delete_file: "high", execute_command: "high", manage_background_process: "high", github_action: "high",
+  enter_plan_mode: "low",
 };
 
 let sessionAllow = {};
 let pendingApproval = null;
-let approvalTimer = null;
-const APPROVAL_TIMEOUT = 60;
 
 function allowKey(toolId, params) {
   if (toolId === "execute_command") {
@@ -3337,109 +3378,78 @@ async function addPersistentAllow(toolId, params) {
   }
 }
 
-const approvalModal = document.getElementById("approval-modal");
-const apprTool = document.getElementById("appr-tool");
-const apprRisk = document.getElementById("appr-risk");
-const apprDetail = document.getElementById("appr-detail");
-const apprEdit = document.getElementById("appr-edit");
-const apprEditInput = document.getElementById("appr-edit-input");
-const approvalVisibility = createVisibilityController(uiMotion, {
-  root: approvalModal,
-  surface: approvalModal.querySelector(".approval-window"),
-  openDuration: UI_MOTION.fast,
-  surfaceOpenDuration: UI_MOTION.dialog,
-  closeDuration: UI_MOTION.fast,
-  surfaceCloseDuration: UI_MOTION.fast,
-});
+const composerPanelBody = document.getElementById("composer-panel-body");
 
 function buildToolDetailHtml(toolId, params) {
   return renderToolApproval(toolId, params, { shortenPath: shortPath, mode: preferredDiffView });
 }
 
-function stopCountdown() {
-  clearInterval(approvalTimer);
-  approvalTimer = null;
-  const hint = document.querySelector(".approval-hint");
-  if (hint) hint.textContent = "[y] approve · [a] for session · [p] always · [n] deny · [e] edit · [Esc] cancel";
-}
-
-function startCountdown() {
-  let remaining = APPROVAL_TIMEOUT;
-  const hint = document.querySelector(".approval-hint");
-  const base = "[y] approve · [a] for session · [p] always · [n] deny · [e] edit · [Esc] cancel";
-  const tick = () => {
-    if (remaining <= 0) {
-      stopCountdown();
-      const r = pendingApproval;
-      if (r) { closeApproval(); r.resolve("once"); }
-      return;
-    }
-    if (hint) hint.textContent = "Auto-approving in " + remaining + "s... (" + base + ")";
-    remaining--;
-  };
-  tick();
-  approvalTimer = setInterval(tick, 1000);
-}
-
-function showApproval(toolId, params, risk) {
-  return new Promise((resolve) => {
-    pendingApproval = { toolId, params, resolve };
-    apprTool.textContent = toolId;
-    apprRisk.textContent = risk.toUpperCase() + " RISK";
-    apprRisk.className = "approval-risk risk-" + risk;
-    apprDetail.innerHTML = buildToolDetailHtml(toolId, params);
-    apprEdit.style.display = "none";
-    void approvalVisibility.open();
-    revealMenuContent(approvalModal, ".approval-header, .approval-detail, .approval-hint", {
-      delay: 55,
-      stagger: 28,
-      maxItems: 4,
-    });
-    cmdInput.disabled = true;
-    startCountdown();
-  });
-}
-
-function closeApproval() {
-  stopCountdown();
-  void approvalVisibility.close();
-  pendingApproval = null;
-  cmdInput.disabled = false;
-}
-
-document.addEventListener("keydown", (ev) => {
-  if (approvalModal.style.display !== "flex" || !pendingApproval) return;
-  const key = ev.key.toLowerCase();
-  if (apprEdit.style.display !== "none") {
-    if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); applyEditToParams(); return; }
-    if (ev.key === "Escape") { ev.preventDefault(); apprEdit.style.display = "none"; return; }
-    return;
-  }
-  ev.preventDefault();
-  if (key === "y") { const r = pendingApproval; closeApproval(); r.resolve("once"); }
-  else if (key === "a") { const r = pendingApproval; sessionAllow[r.toolId] = true; closeApproval(); r.resolve("once"); }
-  else if (key === "p") { const r = pendingApproval; addPersistentAllow(r.toolId, r.params); closeApproval(); r.resolve("once"); }
-  else if (key === "n" || ev.key === "Escape") { const r = pendingApproval; closeApproval(); r.resolve("deny"); }
-  else if (key === "e") {
-    const r = pendingApproval;
-    const current = r.params.command || r.params.cmd || r.params.content || r.params.new_string || r.params.new || "";
-    apprEditInput.value = current;
-    apprEdit.style.display = "block";
-    apprEditInput.focus();
-  }
-});
-
-function applyEditToParams() {
+function applyEditToParams(edited) {
   const r = pendingApproval;
   if (!r) return;
-  const edited = apprEditInput.value;
   if (r.params.command !== undefined) r.params.command = edited;
   else if (r.params.cmd !== undefined) r.params.cmd = edited;
   else if (r.params.content !== undefined) r.params.content = edited;
   else if (r.params.new_string !== undefined) r.params.new_string = edited;
   else if (r.params.new !== undefined) r.params.new = edited;
-  apprDetail.innerHTML = buildToolDetailHtml(r.toolId, r.params);
-  apprEdit.style.display = "none";
+  if (composerPanelBody) composerPanelBody.innerHTML = buildToolDetailHtml(r.toolId, r.params);
+}
+
+composerWorkflow = createComposerWorkflow({
+  shell: document.getElementById("composer-shell"),
+  panel: document.getElementById("composer-panel"),
+  title: document.getElementById("composer-panel-title"),
+  body: composerPanelBody,
+  feedback: document.getElementById("composer-feedback"),
+  actions: document.getElementById("composer-panel-actions"),
+  input: cmdInput,
+}, {
+  reducedMotion: () => resolvedReducedMotion,
+  onHeightChange: autoScroll,
+  onModeChange: (mode) => { composerMode = mode; },
+  animatePanel: (panel, phase) => uiMotion.play(panel, phase === "open" ? [
+    { opacity: 0, transform: "translateY(15px) scale(0.985)" },
+    { opacity: 1, transform: "translateY(0) scale(1)" },
+  ] : [
+    { opacity: 1, transform: "translateY(0) scale(1)" },
+    { opacity: 0, transform: "translateY(9px) scale(0.99)" },
+  ], {
+    duration: phase === "open" ? UI_MOTION.panel : UI_MOTION.fast,
+    easing: phase === "open" ? "cubic-bezier(0.16, 0.82, 0.22, 1)" : "cubic-bezier(0.4, 0, 0.7, 0.2)",
+  }),
+  editValue: () => {
+    const params = pendingApproval?.params || {};
+    return params.command || params.cmd || params.content || params.new_string || params.new || "";
+  },
+  onEdit: applyEditToParams,
+});
+
+async function showApproval(toolId, params, risk) {
+  pendingApproval = { toolId, params };
+  const editable = ["execute_command", "write_file", "edit_file", "apply_diff"].includes(toolId);
+  const decision = await composerWorkflow.requestApproval({
+    toolId,
+    title: toolLabel(toolId, "run"),
+    detailHtml: buildToolDetailHtml(toolId, params),
+    editable,
+  });
+  if (decision === "always") await addPersistentAllow(toolId, params);
+  pendingApproval = null;
+  return decision;
+}
+
+async function reviewPlan(params) {
+  const result = await composerWorkflow.requestPlan({
+    title: String(params.title || "Ready to implement"),
+    rationale: String(params.rationale || ""),
+    steps: Array.isArray(params.steps) ? params.steps : [],
+    timeoutSeconds: 90,
+  });
+  if (result.decision === "apply") {
+    return "PLAN APPROVED. Continue with implementation.";
+  }
+  if (result.decision === "change") return `PLAN CHANGES REQUESTED: ${result.feedback}`;
+  return "PLAN REJECTED. Stop implementation and ask the user what should change.";
 }
 
 async function executeTool(toolId, params, approved, activity, transcriptActivity, call) {
@@ -3508,6 +3518,19 @@ async function processToolItem(call, activity, transcriptActivity) {
   const params = (call.arguments && typeof call.arguments === "object") ? call.arguments : {};
   const risk = TOOL_RISKS[toolId] || "medium";
 
+  if (toolId === "enter_plan_mode") {
+    const started = Date.now();
+    const result = await reviewPlan(params);
+    addActivityTool(transcriptActivity, call, { message: result }, {
+      toolId,
+      summary: result,
+      status: result.startsWith("PLAN REJECTED") ? "err" : "ok",
+      durationMs: Date.now() - started,
+      order: call?.transcriptOrder,
+    });
+    return result;
+  }
+
   if (configCache && configCache.mode === "autonomous") {
     return await executeTool(toolId, params, true, activity, transcriptActivity, call);
   }
@@ -3542,7 +3565,7 @@ async function processToolItem(call, activity, transcriptActivity) {
   return await executeTool(toolId, params, true, activity, transcriptActivity, call);
 }
 
-async function sendChat(message) {
+async function sendChat(message, attachments = [], displayMessage = message) {
   if (!invoke) return;
   if (!TauriChannel) {
     renderAlert("This Tauri version does not support streaming channels.");
@@ -3585,9 +3608,13 @@ async function sendChat(message) {
       HOME_DIR = homeDir;
     } catch (e) {}
 
-    await ensureSession(message);
-    conversationHistory.push({ role: "user", content: message });
-    appendTranscriptEntry(sessionTranscript, createTranscriptEntry("user", { text: message }));
+    const sessionSeed = displayMessage || attachments[0]?.name || message;
+    await ensureSession(sessionSeed);
+    conversationHistory.push({ role: "user", content: message, attachments: attachments.map(publicAttachment) });
+    appendTranscriptEntry(sessionTranscript, createTranscriptEntry("user", {
+      text: displayMessage,
+      attachments: attachments.map(({ name, mimeType, kind, size }) => ({ name, mimeType, kind, size })),
+    }));
     await checkpointSession(null, "active");
     const maxTurns = 12;
 
@@ -3740,7 +3767,7 @@ async function sendChat(message) {
       if (toolCalls.length === 0) {
         if (text.trim()) appendTranscriptEntry(sessionTranscript, createTranscriptEntry("assistant", { text }));
         finishResponseActivity("ok");
-        void generateSmartSessionTitle(message, text);
+        void generateSmartSessionTitle(sessionSeed, text);
         break;
       }
 
@@ -3751,6 +3778,7 @@ async function sendChat(message) {
 
       const canParallelizeReads = toolCalls.length > 1
         && configCache?.mode !== "strict"
+        && toolCalls.every((call) => call.name !== "enter_plan_mode")
         && toolCalls.every((call) => TOOL_RISKS[call.name] === "low");
       const rawResults = canParallelizeReads
         ? await Promise.all(orderedCalls.map((call) => processToolItem(call, activity, responseActivityRecord)))
@@ -3788,111 +3816,81 @@ async function sendChat(message) {
 }
 
 // ===== KOMUTLAR =====
+commandRegistry.setHandler("model", async () => openModelMenu());
+commandRegistry.setHandler("thinking", async () => openThinkingMenu());
+commandRegistry.setHandler("mode", async ({ args }) => {
+  const requested = String(args[0] || "").toLowerCase();
+  if (["auto", "build", "plan"].includes(requested)) {
+    composerWorkflow?.setMode(requested);
+    showStatusToast(`${requested[0].toUpperCase()}${requested.slice(1)} mode selected`);
+  } else {
+    openComposerModeMenu();
+  }
+});
+commandRegistry.setHandler("themes", async ({ args }) => {
+  if (String(args[0] || "").toLowerCase() === "folder") {
+    if (!invoke) return;
+    await userThemeService.openDirectory();
+    return;
+  }
+  await openThemeMenu();
+});
+commandRegistry.setHandler("provider", async ({ args }) => {
+  if (!args[0]) await openProviderMenu();
+  else if (args[0] === "test" && args[1]) await testLinkedProvider(args[1]);
+  else if (args[0] === "reconnect" && args[1]) await reconnectProvider(args[1]);
+  else if (args[0] === "remove" && args[1]) await removeLinkedProvider(args[1]);
+  else logLine("Usage: /provider [test|reconnect|remove] <id>", "sys");
+});
+commandRegistry.setHandler("diagnostics", async () => openDiagnosticsMenu());
+commandRegistry.setHandler("permissions", async () => openModeMenu());
+commandRegistry.setHandler("status", async () => renderSessionStatus());
+commandRegistry.setHandler("compact", async () => {
+  if (activeRequestId) {
+    logLine("Compaction cannot start while a response is active", "err");
+    return;
+  }
+  cmdInput.readOnly = true;
+  setAgentState("working");
+  try {
+    let homeDir = HOME_DIR;
+    if (!homeDir) {
+      try { homeDir = await invoke("home"); } catch (error) {}
+    }
+    const result = await performCompaction("manual", homeDir || "");
+    if (!result.compacted) logLine(result.reason, "dim");
+    else logLine(`Compaction complete · ${fmtK(result.before)} → ${fmtK(result.after)} · ${fmtK(result.saved)} tokens saved`, "ok");
+  } finally {
+    cmdInput.readOnly = false;
+    setAgentState("ready");
+    cmdInput.focus();
+  }
+});
+commandRegistry.setHandler("sessions", async () => openSessionsMenu());
+commandRegistry.setHandler("new", async () => newSession());
+commandRegistry.setHandler("resume", async () => openSessionsMenu());
+commandRegistry.setHandler("delete-session", async () => openDeleteSessionsMenu());
+commandRegistry.setHandler("undo", async () => {
+  try {
+    const undoMsg = await invoke("undo_last");
+    logLine(undoMsg, "ok");
+  } catch (error) {
+    renderAlert("undo: " + error);
+  }
+});
+commandRegistry.setHandler("clear", async () => transcriptVirtualizer.clear());
+
 async function runCommand(cmd) {
   const trimmed = cmd.trim();
   if (!trimmed.startsWith("/")) return;
 
   const parts = trimmed.split(/\s+/);
   const rawName = parts[0];
-  const name = rawName.replace(/^\//, "");
   const args = parts.slice(1);
 
   try {
-    switch (name) {
-      case "model":
-      case "models":
-        await openModelMenu();
-        break;
-
-      case "thinking":
-      case "mode":
-      case "reasoning":
-        await openThinkingMenu();
-        break;
-
-      case "provider":
-        if (!args[0]) {
-          await openProviderMenu();
-        } else if (args[0] === "test" && args[1]) {
-          await testLinkedProvider(args[1]);
-        } else if (args[0] === "reconnect" && args[1]) {
-          await reconnectProvider(args[1]);
-        } else if (args[0] === "remove" && args[1]) {
-          await removeLinkedProvider(args[1]);
-        } else {
-          logLine("Usage: /provider [test|reconnect|remove] <id>", "sys");
-        }
-        break;
-
-      case "diagnostics":
-      case "doctor":
-        await openDiagnosticsMenu();
-        break;
-
-      case "permissions":
-        openModeMenu();
-        break;
-
-      case "status":
-        renderSessionStatus();
-        break;
-
-      case "compact": {
-        if (activeRequestId) {
-          logLine("Compaction cannot start while a response is active", "err");
-          break;
-        }
-        cmdInput.readOnly = true;
-        setAgentState("working");
-        try {
-          let homeDir = HOME_DIR;
-          if (!homeDir) {
-            try { homeDir = await invoke("home"); } catch (error) {}
-          }
-          const result = await performCompaction("manual", homeDir || "");
-          if (!result.compacted) logLine(result.reason, "dim");
-          else logLine(`Compaction complete · ${fmtK(result.before)} → ${fmtK(result.after)} · ${fmtK(result.saved)} tokens saved`, "ok");
-        } finally {
-          cmdInput.readOnly = false;
-          setAgentState("ready");
-          cmdInput.focus();
-        }
-        break;
-      }
-
-      case "sessions":
-        await openSessionsMenu();
-        break;
-
-      case "new":
-        await newSession();
-        break;
-
-      case "resume":
-        await openSessionsMenu();
-        break;
-
-      case "delete-session":
-        await openDeleteSessionsMenu();
-        break;
-
-      case "undo":
-        try {
-          const undoMsg = await invoke("undo_last");
-          logLine(undoMsg, "ok");
-        } catch (e) {
-          renderAlert("undo: " + e);
-        }
-        break;
-
-      case "clear":
-        transcriptVirtualizer.clear();
-        break;
-
-      default:
-        renderAlert("Unknown command: " + rawName);
-        break;
-    }
+    const result = await commandRegistry.execute(rawName, args);
+    if (!result.matched) renderAlert("Unknown command: " + rawName);
   } catch (e) {
     renderAlert("Error: " + e);
   }
@@ -3906,6 +3904,7 @@ async function init() {
     openModal("providers");
     return;
   }
+  await userThemeService.hydrate();
   await hydrateProviderRegistry();
   configCache = upgradeProviderConfig(configCache);
   try {
@@ -3967,7 +3966,6 @@ document.addEventListener("visibilitychange", () => {
   sessionDeleteVisibility.finish();
   statusVisibility.finish();
   diagnosticsVisibility.finish();
-  approvalVisibility.finish();
 });
 
 init();

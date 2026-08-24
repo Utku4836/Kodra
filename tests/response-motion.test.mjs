@@ -77,6 +77,22 @@ test("parcalanmis streaming deltalari kayipsiz birlesir", async () => {
   assert.ok(result.metrics.chunks >= 3);
 });
 
+test("custom reveal presenter receives the paced visible prefix without duplicate text nodes", async () => {
+  const dom = new JSDOM("<!doctype html><body><div id='response'></div></body>");
+  const element = dom.window.document.getElementById("response");
+  const reveals = [];
+  const controller = createResponseMotionController({
+    element,
+    wait: async () => {},
+    onReveal: (visible) => reveals.push(visible),
+  });
+  controller.append("This is **live**.");
+  const result = await controller.finish();
+  assert.equal(reveals.at(-1), result.text);
+  assert.ok(reveals.length > 3);
+  assert.equal(element.childNodes.length, 0);
+});
+
 test("interrupt ham metni aninda ve eksiksiz geri verir", () => {
   const { controller } = motionFixture();
   controller.append("yarim kalan cevap");

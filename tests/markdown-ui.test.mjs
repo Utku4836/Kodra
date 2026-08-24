@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { JSDOM } from "jsdom";
 import {
+  createStreamingMarkdownPresenter,
   highlightCode,
   isSafeExternalUrl,
   looksLikeLocalPath,
   renderMarkdownHtml,
   renderMarkdownInto,
+  stableMarkdownBoundary,
   stabilizeMarkdown,
 } from "../src/markdown-ui.js";
 
@@ -27,6 +29,94 @@ function fixture() {
 }
 
 const settle = (dom) => new Promise((resolve) => dom.window.setTimeout(resolve, 8));
+
+test("live Markdown hides incomplete markers and formats emphasis before the response ends", () => {
+  const { root, actions } = fixture();
+  const presenter = createStreamingMarkdownPresenter(root, { actions, renderIntervalMs: 0 });
+  presenter.update("This is **bold");
+  assert.equal(root.querySelector(".md-stream-live strong")?.textContent, "bold");
+  assert.doesNotMatch(root.querySelector(".md-stream-live").textContent, /\*\*/);
+
+  presenter.update("This is **bold**, *fluid*, `safe` and ~~quiet");
+  assert.equal(root.querySelector(".md-stream-live strong")?.textContent, "bold");
+  assert.equal(root.querySelector(".md-stream-live em")?.textContent, "fluid");
+  assert.equal(root.querySelector(".md-stream-live code")?.textContent, "safe");
+  assert.equal(root.querySelector(".md-stream-live :is(del, s)")?.textContent, "quiet");
+  presenter.destroy();
+});
+
+test("streaming delimiters remain correct across fragmented provider updates", () => {
+  assert.deepEqual(stabilizeMarkdown("A **par", true), { text: "A **par**", incomplete: true });
+  assert.deepEqual(stabilizeMarkdown("A **part**", true), { text: "A **part**", incomplete: false });
+  assert.deepEqual(stabilizeMarkdown("Use `val", true), { text: "Use `val`", incomplete: true });
+  assert.deepEqual(stabilizeMarkdown("Try ***nested", true), { text: "Try ***nested***", incomplete: true });
+  assert.equal(stabilizeMarkdown("\\*\\*literal\\*\\*", true).incomplete, false);
+});
+
+test("completed paragraphs stay mounted while only the active tail changes", () => {
+  const { root, actions } = fixture();
+  const presenter = createStreamingMarkdownPresenter(root, { actions, renderIntervalMs: 0 });
+  presenter.update("First **block**.\n\nSecond block");
+  const first = root.querySelector(".md-stream-block-settled");
+  assert.ok(first);
+  assert.equal(first.querySelector("strong")?.textContent, "block");
+  assert.equal(stableMarkdownBoundary("First.\n\nSecond"), 8);
+
+  presenter.update("First **block**.\n\nSecond block keeps growing.");
+  assert.equal(root.querySelector(".md-stream-block-settled"), first);
+  assert.match(root.querySelector(".md-stream-live").textContent, /keeps growing/);
+  assert.equal(presenter.metrics.committedBlocks, 1);
+  presenter.destroy();
+});
+
+test("links and path actions stay inert until their live block is committed", () => {
+  const { root, actions } = fixture();
+  const presenter = createStreamingMarkdownPresenter(root, { actions, renderIntervalMs: 0 });
+  presenter.update("[Docs](https://example.com) and `src/main.js`");
+  assert.equal(root.querySelector(".md-stream-live a")?.hasAttribute("href"), false);
+  assert.equal(root.querySelector(".md-stream-live .md-path")?.disabled, true);
+
+  presenter.update("[Docs](https://example.com) and `src/main.js`\n\n");
+  assert.equal(root.querySelector(".md-stream-settled a")?.getAttribute("href"), "https://example.com");
+  assert.equal(root.querySelector(".md-stream-settled .md-path")?.disabled, false);
+  presenter.destroy();
+});
+
+test("live code, headings, lists, callouts and tables use enhanced structures", () => {
+  const { root, actions } = fixture();
+  const presenter = createStreamingMarkdownPresenter(root, { actions, renderIntervalMs: 0 });
+  presenter.update("```js\nconst live = true;");
+  assert.ok(root.querySelector(".md-stream-live .md-code-block"));
+  assert.equal(root.querySelector(".md-stream-live .md-copy-code").disabled, true);
+
+  presenter.update([
+    "```js", "const live = true;", "```", "", "## Structure", "", "- one", "- two", "",
+    "> [!NOTE] Streaming", "> Stable blocks", "", "| Key | Value |", "| --- | --- |", "| fps | adaptive |",
+  ].join("\n"));
+  assert.ok(root.querySelector(".md-stream-settled .md-code-block"));
+  assert.ok(root.querySelector("h2"));
+  assert.equal(root.querySelectorAll("li").length, 2);
+  assert.ok(root.querySelector(".md-callout"));
+  assert.ok(root.querySelector(".md-table-wrap"));
+  presenter.destroy();
+});
+
+test("streaming renderer bounds repaint work and exposes a quiet screen-reader channel", () => {
+  const { root, actions } = fixture();
+  const presenter = createStreamingMarkdownPresenter(root, { actions, renderIntervalMs: 40 });
+  let source = "<img src=x onerror=alert(1)>\n\n";
+  for (let index = 0; index < 600; index += 1) {
+    source += index % 17 === 0 ? " **word**" : " text";
+    presenter.update(source);
+  }
+  presenter.flush();
+  assert.ok(presenter.metrics.renderCount <= 3, `too many renders: ${presenter.metrics.renderCount}`);
+  assert.equal(presenter.metrics.sourceLength, source.length);
+  assert.equal(root.hasAttribute("aria-live"), false);
+  assert.equal(root.querySelector(".md-stream-announcer").getAttribute("aria-live"), "polite");
+  assert.equal(root.querySelector("script, [onclick], [style]"), null);
+  presenter.destroy();
+});
 
 test("URL ve yerel yol sinirlari tehlikeli protokolleri reddeder", () => {
   assert.equal(isSafeExternalUrl("https://example.com/docs"), true);
@@ -95,6 +185,15 @@ test("kod yuzeyi dil, satir sayisi, vurgulama, kopyalama ve daraltma sunar", asy
   expand.click();
   assert.equal(figure.classList.contains("is-collapsed"), false);
   assert.equal(expand.getAttribute("aria-expanded"), "true");
+});
+
+test("short shell blocks use the compact terminal command surface", () => {
+  const { root, actions } = fixture();
+  renderMarkdownInto(root, "```powershell\nnpm test\n```", { actions });
+  const surface = root.querySelector(".md-code-block");
+  assert.ok(surface.classList.contains("md-code-command"));
+  assert.equal(surface.dataset.lines, "1");
+  assert.equal(surface.querySelector(".md-code-language").textContent, "PowerShell");
 });
 
 test("diff satirlari anlamini kaybetmeden siniflandirilir", async () => {

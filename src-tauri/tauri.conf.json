@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-"productName": "Kodra",
-  "version": "0.1.0",
+  "productName": "Kodra",
+  "version": "0.2.0",
   "identifier": "com.utkui.kodra",
   "build": {
     "frontendDist": "../src"
@@ -17,7 +17,12 @@
         "minHeight": 360,
         "resizable": true,
         "decorations": false,
-        "transparent": false,
+        "transparent": true,
+        "windowEffects": {
+          "effects": [
+            "acrylic"
+          ]
+        },
         "shadow": true,
         "center": true,
         "focus": true,
@@ -42,8 +47,7 @@
   "bundle": {
     "active": true,
     "targets": [
-      "nsis",
-      "msi"
+      "nsis"
     ],
     "publisher": "Utku",
     "homepage": "https://github.com/Utku4836/Kodra",
@@ -62,7 +66,16 @@
       "allowDowngrades": false,
       "nsis": {
         "installerIcon": "icons/icon.ico",
-        "uninstallerIcon": "icons/icon.ico"
+        "uninstallerIcon": "icons/icon.ico",
+        "sidebarImage": "windows/installer-sidebar.bmp",
+        "headerImage": "windows/installer-header.bmp",
+        "installMode": "currentUser",
+        "compression": "lzma",
+        "languages": [
+          "English"
+        ],
+        "displayLanguageSelector": false,
+        "startMenuFolder": "Kodra"
       },
       "webviewInstallMode": {
         "type": "downloadBootstrapper",

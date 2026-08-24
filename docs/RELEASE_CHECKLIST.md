@@ -1,61 +1,80 @@
-# Release checklist
+# Kodra 0.2.0 release-candidate checklist
 
-This checklist records the published `0.1.0` release and the current development build. Publishing a newer release still requires an explicit owner decision.
+This checklist tracks the `develop` build. It does not authorize publishing a release. The latest published GitHub release remains `v0.1.0` until the owner explicitly approves a new publication.
 
 ## Product and metadata
 
-- [x] Product name and version agree across npm, Cargo, and Tauri.
-- [x] Package descriptions, author, repository, and MIT license metadata are set.
-- [x] README, changelog, draft release notes, and security policy are present.
-- [x] Application icons are generated from the approved transparent source.
-- [x] The executable rebuilds when the Windows icon changes.
-- [x] GitHub repository visibility is public.
+- [x] npm, Cargo, and Tauri versions are `0.2.0`.
+- [x] Product, author, repository, description, and MIT license metadata agree.
+- [x] README, changelog, release notes, security policy, architecture, themes, and release guides exist.
+- [x] Application icons use the approved transparent source.
+- [x] NSIS sidebar and header artwork is generated deterministically.
+- [x] The visible client language and maintained release documentation are English.
 
 ## Security
 
-- [x] Provider secrets use Windows Credential Manager.
-- [x] Production devtools are disabled.
-- [x] A restrictive Tauri Content Security Policy is enabled.
-- [x] Only the declared main-window capability is enabled.
-- [ ] Windows installers are signed with a trusted code-signing certificate.
-- [ ] Signed artifacts have been checked with `Get-AuthenticodeSignature`.
+- [x] Provider secrets remain in Windows Credential Manager.
+- [x] Production WebView developer tools are disabled.
+- [x] A restrictive Tauri Content Security Policy and one declared capability are enabled.
+- [x] Native permission policy is authoritative even when risk labels are hidden in the UI.
+- [x] Strict mode asks before every tool; destructive operations remain blocked; critical paths require per-action approval.
+- [x] User themes are size/count bounded and reject unknown or executable CSS values.
+- [ ] Windows binaries are signed with a trusted code-signing certificate.
+- [ ] Signed artifacts are verified with `Get-AuthenticodeSignature`.
 
-## Validation
+## Automated validation
 
-- [x] `npm ci` succeeds from the locked dependency set.
-- [x] `npm audit --audit-level=high` reports no advisories.
-- [x] `cargo audit` reports zero vulnerabilities. Of 17 informational warnings, 12 transitive GTK/proc-macro warnings are absent from the Windows tree; the remaining five are unmaintained UNIC crates inherited through Tauri's `urlpattern` dependency.
-- [x] All 42 JavaScript tests pass.
-- [x] All 39 Rust tests pass.
-- [x] Runtime benchmark completes without regression.
-- [x] All 36 release metadata checks pass.
-- [x] Release application build succeeds with production CSP enabled.
-- [x] NSIS and MSI installers build successfully.
-- [x] The release executable launches, responds, and contains the approved transparent icon.
-- [ ] Provider setup, one tool approval, session resume, and session deletion pass a smoke test.
-- [ ] Installation and uninstall are tested on a clean Windows account or VM.
+- [x] `npm test`: 102/102 passed on 2026-08-24.
+- [x] `cargo test --lib`: 51/51 passed on 2026-08-23.
+- [x] `cargo fmt --check` passed on 2026-08-23.
+- [x] `cargo check` passed on 2026-08-23.
+- [x] `npm audit --audit-level=high` reports zero vulnerabilities.
+- [x] `npm run benchmark:runtime` completed and its jsdom structural measurements were recorded; real WebView motion was checked separately.
+- [x] `npm run verify:release`: 47/47 checks passed.
+- [x] `npm run build:release` produced the final staged artifact set.
 
-## `0.1.0` publication record
+## UI and functional smoke
 
-- [x] Review the final diff and release notes.
-- [x] Commit and push the release-preparation changes.
-- [x] Create the `v0.1.0` tag.
-- [x] Run the manual **Draft Windows Release** workflow.
-- [x] Publish the GitHub Release after owner approval.
-- [x] Make the repository public after owner approval.
+- [x] Kodra, Mist, and Ember render in a real Tauri WebView.
+- [x] Mist acrylic/translucency remains visible over a real desktop and text is not blurred.
+- [x] `/themes` and `/mode` share centered menu geometry, keyboard navigation, and visible row motion.
+- [x] Activity groups use the compact Thinking/Worked hierarchy and aligned tool rows.
+- [x] Approval and plan review attach to the composer instead of appearing as disconnected dialogs.
+- [ ] Provider setup, one read, one approved write, session resume, and session deletion pass on the final production binary.
+- [x] Setup install, launch, and uninstall passed on the current Windows profile; version `0.2.0` was reported and user data remained byte-for-byte unchanged.
+- [ ] Setup install, upgrade, and uninstall pass on a clean Windows account or VM.
+- [x] Portable `0.2.0` launched and remained responsive from an isolated directory outside the repository.
 
-## Next release gate
+## Artifact contract
 
-- [ ] Choose and apply the next version number.
-- [ ] Complete the provider and clean-machine smoke tests below.
-- [ ] Review the changelog and generated artifact hashes.
-- [ ] Create and verify a draft release before publication.
+- [x] Tauri bundle target is NSIS only.
+- [x] Release staging rejects MSI files and duplicate setup executables.
+- [x] Exactly `Kodra_0.2.0_x64-setup.exe` and `Kodra_0.2.0_x64-portable.exe` are staged.
+- [x] `SHA256SUMS.txt` matches both binaries.
+- [x] `release-manifest.json` lists only setup and portable binaries.
+- [x] GitHub supplies Source code ZIP and TAR archives; no duplicate source archive is uploaded.
 
-## Artifact record
+## Repository and publication
 
-Record filenames, sizes, SHA-256 hashes, signature state, and smoke-test results here before publication.
+- [x] Final diff and generated-file scope are reviewed.
+- [x] Secret and stale-product-string scans are clean.
+- [ ] Intended changes are committed and pushed to `develop`.
+- [ ] The pushed commit is confirmed on `origin/develop`.
+- [x] The workflow creates only a manual draft prerelease.
+- [ ] No `0.2.0` release is published without explicit owner approval.
+
+## Candidate artifact record
+
+Fill this table from the final staging manifest rather than copying historical values.
 
 | Artifact | Size | SHA-256 | Signature | Smoke test |
 | --- | ---: | --- | --- | --- |
-| NSIS setup | 3.48 MiB | `A6AF0882349DC7232F89EE80EAF554C5BE9F3E287E9B1FE241139315CE01E139` | Not signed | Current develop build; installer smoke test pending |
-| MSI installer | 5.22 MiB | `FB2E438DB7203DEB72325AE788FD2EC84ED34AF9DF52397F827D64AE86C9DE2A` | Not signed | Current develop build; installer smoke test pending |
+| NSIS setup | 3,733,152 bytes | `A6951A178B68E1B350764924B9AB59023482743EC186C107F435B0ACF69DBCA1` | Not signed | Install, launch, uninstall passed on current profile |
+| Portable EXE | 14,833,152 bytes | `8120F31FF501BE0311C3D0970355ED2E9BA275DA06062B713E0D22B8FA180DF8` | Not signed | Responsive launch outside repository passed |
+
+## Known blockers to a public-ready claim
+
+- Trusted Windows code signing is not configured.
+- A clean-machine install/upgrade/uninstall pass has not yet been recorded.
+
+Checksums prove file integrity; they do not replace code signing.

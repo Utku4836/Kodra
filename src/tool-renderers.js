@@ -13,6 +13,7 @@ const ICONS = Object.freeze({
   process: '<svg viewBox="0 0 16 16"><path d="M3 4h7M10 4l-2-2M10 4 8 6M13 12H6M6 12l2-2M6 12l2 2"/></svg>',
   github: '<svg viewBox="0 0 16 16"><path d="M5 3.5h6v4H5zM8 7.5v5M4 12.5h8M3 5.5H1.8v7H4M12 5.5h2.2v7H12"/></svg>',
   agent: '<svg viewBox="0 0 16 16"><circle cx="5" cy="4" r="1.5"/><circle cx="11" cy="8" r="1.5"/><circle cx="5" cy="12" r="1.5"/><path d="M6.5 4h1A2.5 2.5 0 0 1 10 6.5M6.5 12h1A2.5 2.5 0 0 0 10 9.5"/></svg>',
+  plan: '<svg viewBox="0 0 16 16"><path d="M3 3.5h2M7 3.5h6M3 8h2M7 8h6M3 12.5h2M7 12.5h6"/></svg>',
   tool: '<svg viewBox="0 0 16 16"><path d="M9.5 3.1a3 3 0 0 0-3.6 3.8l-3.4 3.4 3.2 3.2 3.4-3.4a3 3 0 0 0 3.8-3.6l-2 2-2.4-.7-.7-2.4z"/></svg>',
 });
 
@@ -34,6 +35,7 @@ const DEFINITIONS = Object.freeze({
   manage_background_process: { icon: "process", labels: ["Managing process", "Managed process", "Process action failed"], target: ["action", "pid", "command"] },
   github_action: { icon: "github", labels: ["Updating GitHub", "Updated GitHub", "GitHub action failed"], target: ["action", "repository", "repo"] },
   spawn_sub_agent: { icon: "agent", labels: ["Delegating", "Delegated", "Delegation failed"], target: ["task", "prompt"] },
+  enter_plan_mode: { icon: "plan", labels: ["Reviewing plan", "Plan reviewed", "Plan rejected"], target: ["title"] },
 });
 
 function escapeHtml(value) {
@@ -71,7 +73,7 @@ export function toolTarget(toolId, params = {}, shorten = (value) => String(valu
 }
 
 export function toolDetailRows(toolId, params = {}, shorten = (value) => String(value || "")) {
-  const rows = [{ label: "Tool", value: String(toolId || "tool") }];
+  const rows = [];
   for (const [label, value] of [
     ["Path", params.path], ["Command", params.command ?? params.cmd], ["URL", params.url],
     ["Query", params.query ?? params.pattern], ["Action", params.action], ["Repository", params.repository ?? params.repo],

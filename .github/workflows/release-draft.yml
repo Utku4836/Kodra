@@ -18,7 +18,7 @@ concurrency:
 jobs:
   draft:
     name: Build private draft release
-    if: github.ref == 'refs/heads/master' && inputs.confirmation == 'draft'
+    if: (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/develop') && inputs.confirmation == 'draft'
     runs-on: windows-latest
     timeout-minutes: 45
 
@@ -43,7 +43,7 @@ jobs:
       - name: Run release checks
         run: npm run release:check
 
-      - name: Build installers and create a private draft
+      - name: Build the NSIS setup and create a private draft
         id: release
         uses: tauri-apps/tauri-action@v1.0.0
         env:
@@ -56,18 +56,21 @@ jobs:
           releaseDraft: true
           prerelease: true
 
-      - name: Apply release notes and upload checksums
+      - name: Stage the portable binary and release manifest
+        run: npm run release:stage
+
+      - name: Apply release notes and upload the portable binary metadata
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: v${{ steps.release.outputs.appVersion }}
         run: |
           gh release edit $env:RELEASE_TAG --draft --prerelease --notes-file RELEASE_NOTES.md
-          $artifacts = Get-ChildItem src-tauri/target/release/bundle -Recurse -File |
-            Where-Object { $_.Extension -in '.exe', '.msi' }
-          $checksums = $artifacts | ForEach-Object {
-            $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
-            "$hash  $($_.Name)"
-          }
-          Set-Content -LiteralPath SHA256SUMS.txt -Value $checksums -Encoding utf8
-          gh release upload $env:RELEASE_TAG SHA256SUMS.txt --clobber
+          $stage = Join-Path "release-artifacts" $env:RELEASE_TAG
+          $portable = Get-ChildItem -LiteralPath $stage -File -Filter "*-portable.exe" -ErrorAction Stop
+          if ($portable.Count -ne 1) { throw "Expected exactly one portable executable." }
+          gh release upload $env:RELEASE_TAG `
+            $portable[0].FullName `
+            (Join-Path $stage "SHA256SUMS.txt") `
+            (Join-Path $stage "release-manifest.json") `
+            --clobber
