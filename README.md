@@ -188,9 +188,9 @@ Common frontend defaults live in `src/kodra.config.js`; commands, selection surf
 
 ## Release status
 
-Version `0.1.0` remains the latest published release. The `develop` branch is preparing `0.2.0`, including the theme and extension systems and the simplified setup-plus-portable release layout. No `0.2.0` release is published automatically. The Windows binaries are not code-signed yet, so Microsoft SmartScreen may show a warning on first run.
+Version `0.2.1` is the current release. It brings full visual theme coverage across all dialogs and modals (including Session Status, Provider Diagnostics, and Credentials), seamless frosted-glass modal search styling, softened command dock curvature with a centered attachment trigger, and refined keyboard selection alignment. The Windows binaries are not code-signed yet, so Microsoft SmartScreen may show a warning on first run.
 
-See [CHANGELOG.md](CHANGELOG.md), [RELEASE_NOTES.md](RELEASE_NOTES.md), and [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) for the current release state.
+See [CHANGELOG.md](CHANGELOG.md), [RELEASE_NOTES.md](RELEASE_NOTES.md), and [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) for the complete release details and history.
 
 ## Security reports
 
