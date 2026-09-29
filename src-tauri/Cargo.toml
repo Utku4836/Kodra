@@ -1,6 +1,6 @@
 [package]
 name = "kodra"
-version = "0.2.0"
+version = "0.2.1"
 description = "A keyboard-first desktop AI workspace with native tools and persistent sessions"
 authors = ["Utku"]
 repository = "https://github.com/Utku4836/Kodra"

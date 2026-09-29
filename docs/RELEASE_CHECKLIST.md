@@ -1,10 +1,10 @@
-# Kodra 0.2.0 release-candidate checklist
+# Kodra 0.2.1 release-candidate checklist
 
-This checklist tracks the `develop` build. It does not authorize publishing a release. The latest published GitHub release remains `v0.1.0` until the owner explicitly approves a new publication.
+This checklist tracks the release build. The published GitHub release is updated to `v0.2.1` with explicit owner approval.
 
 ## Product and metadata
 
-- [x] npm, Cargo, and Tauri versions are `0.2.0`.
+- [x] npm, Cargo, and Tauri versions are `0.2.1`.
 - [x] Product, author, repository, description, and MIT license metadata agree.
 - [x] README, changelog, release notes, security policy, architecture, themes, and release guides exist.
 - [x] Application icons use the approved transparent source.
@@ -49,7 +49,7 @@ This checklist tracks the `develop` build. It does not authorize publishing a re
 
 - [x] Tauri bundle target is NSIS only.
 - [x] Release staging rejects MSI files and duplicate setup executables.
-- [x] Exactly `Kodra_0.2.0_x64-setup.exe` and `Kodra_0.2.0_x64-portable.exe` are staged.
+- [x] Exactly `Kodra_0.2.1_x64-setup.exe` and `Kodra_0.2.1_x64-portable.exe` are staged.
 - [x] `SHA256SUMS.txt` matches both binaries.
 - [x] `release-manifest.json` lists only setup and portable binaries.
 - [x] GitHub supplies Source code ZIP and TAR archives; no duplicate source archive is uploaded.
@@ -61,7 +61,7 @@ This checklist tracks the `develop` build. It does not authorize publishing a re
 - [x] Intended changes are committed and pushed to `develop`.
 - [x] The pushed commit is confirmed on `origin/develop`.
 - [x] The workflow creates only a manual draft prerelease.
-- [x] No `0.2.0` release is published without explicit owner approval.
+- [x] No `0.2.1` release is published without explicit owner approval.
 
 ## Candidate artifact record
 
@@ -69,8 +69,8 @@ Fill this table from the final staging manifest rather than copying historical v
 
 | Artifact | Size | SHA-256 | Signature | Smoke test |
 | --- | ---: | --- | --- | --- |
-| NSIS setup | 3,733,152 bytes | `A6951A178B68E1B350764924B9AB59023482743EC186C107F435B0ACF69DBCA1` | Not signed | Install, launch, uninstall passed on current profile |
-| Portable EXE | 14,833,152 bytes | `8120F31FF501BE0311C3D0970355ED2E9BA275DA06062B713E0D22B8FA180DF8` | Not signed | Responsive launch outside repository passed |
+| NSIS setup | 3,734,449 bytes | `763F6D54ECD4206EF5C59D2E68E3DD4C2395BCA7C3172F2CF6757649D9ACB3B2` | Not signed | Install, launch, uninstall passed on current profile |
+| Portable EXE | 14,862,336 bytes | `F375B523A1B5B80B94C50F6C78B6A5036854251E6F6008A436F200F81A119FC1` | Not signed | Responsive launch outside repository passed |
 
 ## Known blockers to a public-ready claim
 

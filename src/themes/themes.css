@@ -67,27 +67,40 @@ body {
   background: linear-gradient(to top, var(--theme-canvas-background, #000000) 76%, transparent);
 }
 
-.command-dock,
+.command-dock {
+  background: var(--theme-surface-raised, rgba(14, 16, 20, 0.85));
+  border-color: var(--theme-border-subtle, rgba(255, 255, 255, 0.08));
+  backdrop-filter: blur(var(--theme-glass-blur, 12px)) saturate(var(--theme-glass-saturation, 100%));
+  -webkit-backdrop-filter: blur(var(--theme-glass-blur, 12px)) saturate(var(--theme-glass-saturation, 100%));
+}
+
 .composer-panel,
 .suggest-panel,
 .modal-window,
+.status-window,
+.diagnostics-window,
+.confirm-window,
+.api-window,
 .window-menu {
-  background: var(--theme-surface-raised, rgba(3, 4, 5, 0.97));
-  border-color: var(--theme-border-subtle, rgba(255, 255, 255, 0.055));
+  background: var(--theme-surface-panel, rgba(3, 4, 5, 0.97));
+  border: 1px solid var(--theme-border-subtle, rgba(255, 255, 255, 0.08));
   box-shadow: var(--theme-shadow-panel, 0 28px 80px rgba(0, 0, 0, 0.68));
-  backdrop-filter: blur(var(--theme-glass-blur, 0px)) saturate(var(--theme-glass-saturation, 100%));
-  -webkit-backdrop-filter: blur(var(--theme-glass-blur, 0px)) saturate(var(--theme-glass-saturation, 100%));
+  backdrop-filter: blur(var(--theme-glass-blur, 16px)) saturate(var(--theme-glass-saturation, 100%));
+  -webkit-backdrop-filter: blur(var(--theme-glass-blur, 16px)) saturate(var(--theme-glass-saturation, 100%));
 }
 
 .composer-panel::after { background: var(--theme-border-subtle, rgba(255, 255, 255, 0.055)); }
 .modal { background: var(--theme-overlay-scrim, rgba(0, 0, 0, 0.76)); }
-.modal-search { background: var(--theme-surface-inset, rgba(0, 0, 0, 0.34)); }
+.modal-search {
+  background: transparent;
+  border-bottom: 1px solid var(--theme-border-subtle, rgba(255, 255, 255, 0.065));
+}
 .modal-search-input,
 .command-input,
 .composer-feedback { color: var(--theme-text-primary, #ededed); caret-color: var(--theme-accent-primary, #dce8f0); }
 .modal-search-input::placeholder,
 .command-input::placeholder,
-.composer-feedback::placeholder { color: var(--theme-text-muted, #666666); }
+.composer-feedback::placeholder { color: var(--theme-text-muted, #666666); opacity: 0.85; }
 
 .modal-category,
 .provider-item-state,
@@ -148,10 +161,61 @@ body {
 .diff-del { background: var(--theme-diff-deleteBackground, rgba(144, 61, 70, 0.12)); color: var(--theme-diff-deleteText, #d0959a); }
 .diff-hunk { color: var(--theme-diff-hunk, #8294a7); }
 
-.status-window,
-.diagnostics-window,
-.confirm-window,
-.api-window { background: var(--theme-surface-panel, #050607); }
+.status-provider { color: var(--theme-text-muted, #747a81); }
+.status-heading h2 { color: var(--theme-text-primary, #ededed); }
+.status-close { color: var(--theme-text-dim, #858c95); }
+.status-close:hover,
+.status-close:focus-visible { color: var(--theme-text-primary, #ededed); }
+.status-hero-label { color: var(--theme-text-muted, #747a81); }
+.status-hero-top strong { color: var(--theme-text-primary, #ededed); }
+.status-hero-top span { color: var(--theme-text-dim, #858c95); }
+.status-hero-track { background: var(--theme-surface-soft, rgba(255, 255, 255, 0.065)); }
+.status-hero-track span { background: var(--theme-accent-primary, #dce8f0); }
+.status-section { border-top-color: var(--theme-border-subtle, rgba(255, 255, 255, 0.055)); }
+.status-section h3 { color: var(--theme-text-muted, #747a81); }
+.status-metric { color: var(--theme-text-secondary, #abb0b7); }
+.status-metric-label { color: var(--theme-text-dim, #858c95); }
+.status-metric.emphasis .status-metric-value { color: var(--theme-text-primary, #ededed); }
+
+.diagnostics-provider { color: var(--theme-text-muted, #70757c); }
+.diagnostics-heading h2 { color: var(--theme-text-primary, #eff0f1); }
+.diagnostics-overall { color: var(--theme-text-dim, #898f96); }
+.diagnostics-summary { background: var(--theme-surface-soft, rgba(255, 255, 255, 0.014)); border-color: var(--theme-border-subtle, rgba(255, 255, 255, 0.052)); }
+.diagnostics-meta-item > span,
+.diagnostics-last-request > span,
+.diagnostics-limits > span { color: var(--theme-text-muted, #60666d); }
+.diagnostics-meta-item strong,
+.diagnostics-last-request strong,
+.diagnostics-limits strong { color: var(--theme-text-primary, #eef0f2); }
+.diagnostics-actions {
+  background: var(--theme-surface-inset, rgba(0, 0, 0, 0.12));
+  border-top-color: var(--theme-border-subtle, rgba(255, 255, 255, 0.045));
+}
+.diagnostics-actions button {
+  color: var(--theme-text-secondary, #858a91);
+}
+.diagnostics-actions button:hover:not(:disabled),
+.diagnostics-actions button:focus-visible {
+  color: var(--theme-text-primary, #d8dade);
+  background: var(--theme-surface-hover, rgba(255, 255, 255, 0.045));
+}
+
+.confirm-copy h2 { color: var(--theme-text-primary, #f2f2f2); }
+.confirm-copy p { color: var(--theme-text-dim, #858a91); }
+.confirm-button { color: var(--theme-text-secondary, #a9adb2); }
+.confirm-button:hover { color: var(--theme-text-primary, #f3f3f3); background: var(--theme-surface-hover, rgba(255, 255, 255, 0.045)); }
+.confirm-button.danger { color: var(--theme-state-danger, #cf7f85); background: var(--theme-surface-soft, rgba(255, 255, 255, 0.035)); }
+
+.api-provider-title { color: var(--theme-text-primary, #f2f3f4); }
+.api-field-label { color: var(--theme-text-muted, #747a82); }
+.api-config-input,
+.api-config-select,
+.api-config-textarea {
+  background: var(--theme-surface-inset, rgba(0, 0, 0, 0.28));
+  border-color: var(--theme-border-subtle, rgba(255, 255, 255, 0.07));
+  color: var(--theme-text-primary, #ededed);
+}
+
 .status-close:focus-visible,
 .diagnostics-actions button:focus-visible,
 .confirm-button:focus-visible,
@@ -165,27 +229,115 @@ body {
 #modal[data-mode="themes"] .modal-list { padding: 12px 16px 16px; outline: none; }
 .theme-item { display: flex; align-items: center; }
 
+/* Mist Theme overrides */
 html[data-theme="mist"] .app {
   border: 1px solid var(--theme-border-subtle);
 }
 
-html[data-theme="mist"] .command-dock,
+html[data-theme="mist"] .command-dock {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(16px) saturate(135%);
+  -webkit-backdrop-filter: blur(16px) saturate(135%);
+}
+
+html[data-theme="mist"] .command-dock:focus-within {
+  background: rgba(255, 255, 255, 0.075);
+  border-color: rgba(255, 255, 255, 0.22);
+  box-shadow: 0 6px 28px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
 html[data-theme="mist"] .composer-panel,
 html[data-theme="mist"] .suggest-panel,
-html[data-theme="mist"] .modal-window {
-  box-shadow: var(--theme-shadow-panel);
+html[data-theme="mist"] .modal-window,
+html[data-theme="mist"] .status-window,
+html[data-theme="mist"] .diagnostics-window,
+html[data-theme="mist"] .confirm-window,
+html[data-theme="mist"] .api-window {
+  background: rgba(24, 31, 28, 0.74);
+  border: 1px solid rgba(244, 250, 246, 0.12);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), var(--theme-shadow-panel);
+  backdrop-filter: blur(24px) saturate(125%);
+  -webkit-backdrop-filter: blur(24px) saturate(125%);
+}
+
+html[data-theme="mist"] .modal-search {
+  background: transparent;
+  border-bottom: 1px solid rgba(244, 250, 246, 0.08);
+}
+
+html[data-theme="mist"] .status-hero-track span {
+  background: #b9dad5;
+}
+
+/* Ember Theme overrides */
+html[data-theme="ember"] .command-dock {
+  background: rgba(20, 16, 13, 0.86);
+  border: 1px solid rgba(230, 160, 90, 0.16);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(230, 160, 90, 0.05);
+}
+
+html[data-theme="ember"] .command-dock:focus-within {
+  border-color: rgba(230, 160, 90, 0.38);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.48), 0 0 14px rgba(230, 160, 90, 0.08);
+}
+
+html[data-theme="ember"] .composer-panel,
+html[data-theme="ember"] .suggest-panel,
+html[data-theme="ember"] .modal-window,
+html[data-theme="ember"] .status-window,
+html[data-theme="ember"] .diagnostics-window,
+html[data-theme="ember"] .confirm-window,
+html[data-theme="ember"] .api-window {
+  background: rgba(24, 18, 20, 0.96);
+  border: 1px solid rgba(236, 184, 195, 0.12);
+  box-shadow: inset 0 1px 0 rgba(240, 183, 195, 0.03), var(--theme-shadow-panel);
+  backdrop-filter: blur(14px) saturate(105%);
+  -webkit-backdrop-filter: blur(14px) saturate(105%);
+}
+
+html[data-theme="ember"] .modal-search {
+  background: transparent;
+  border-bottom: 1px solid rgba(236, 184, 195, 0.08);
+}
+
+html[data-theme="ember"] .status-hero-track span {
+  background: var(--theme-accent-primary, #df91a3);
 }
 
 html[data-theme="ember"] .menu-selection-chevron,
 html[data-theme="ember"] .user-block::before,
 html[data-theme="ember"] .rich-message a { color: var(--theme-accent-primary); }
 
+/* Kodra Theme overrides */
+html[data-theme="kodra"] .composer-panel,
+html[data-theme="kodra"] .suggest-panel,
+html[data-theme="kodra"] .modal-window,
+html[data-theme="kodra"] .status-window,
+html[data-theme="kodra"] .diagnostics-window,
+html[data-theme="kodra"] .confirm-window,
+html[data-theme="kodra"] .api-window {
+  background: rgba(14, 16, 20, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03), var(--theme-shadow-panel);
+}
+
+html[data-theme="kodra"] .modal-search {
+  background: transparent;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
 @media (forced-colors: active) {
   .app,
   .command-dock,
   .composer-panel,
   .suggest-panel,
-  .modal-window {
+  .modal-window,
+  .status-window,
+  .diagnostics-window,
+  .confirm-window,
+  .api-window {
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
     forced-color-adjust: auto;

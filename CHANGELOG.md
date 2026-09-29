@@ -2,7 +2,25 @@
 
 All notable changes to Kodra are recorded here. The project follows [Semantic Versioning](https://semver.org/) from its first release onward.
 
-## [Unreleased]
+## [0.2.1] - 2026-09-29
+
+### Added
+
+- Full visual theme coverage across all auxiliary modal windows, including Session Status (`/status`), Provider Diagnostics, Delete Session Confirmation, and API configuration.
+- Native frosted-glass acrylic transparency for all modal surfaces under the Mist theme.
+
+### Changed
+
+- Seamless modal search header styling: removed the dark contrasting background in favor of a transparent surface that matches the active theme window.
+- Softened command dock geometry with rounded corners, subtle translucent borders, and focused ambient depth.
+- Replaced the text plus sign on the attachment button with a crisp, centered vector icon.
+
+### Fixed
+
+- Selection chevron alignment in command suggestion and modal lists, positioning the indicator directly alongside item titles without awkward whitespace gaps.
+- Dynamic theming for session status metrics, progress tracks, and header typography across Mist, Ember, and Kodra themes.
+
+## [0.2.0] - 2026-08-24
 
 ### Added
 
@@ -33,11 +51,6 @@ All notable changes to Kodra are recorded here. The project follows [Semantic Ve
 - Forward API-provided OpenAI-compatible reasoning efforts instead of collapsing unknown supported modes to `low`.
 - Require approval for every tool in Strict mode and prevent saved allows from bypassing critical-path checks.
 - Keep menu selection motion stable during rapid keyboard navigation and isolate invalid custom themes.
-
-### Planned
-
-- Code-sign the Windows installers before the next public release.
-- Complete a clean-machine installation smoke test.
 
 ## [0.1.0] - 2026-08-15
 

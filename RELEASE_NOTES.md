@@ -1,37 +1,27 @@
-# Kodra 0.2.0 release candidate
+# Kodra 0.2.1
 
-Kodra 0.2.0 makes the workspace quieter on the surface and more extensible underneath. Tool activity now reads as one compact timeline, the composer owns approvals and plans without opening a disconnected dialog, and three complete visual themes can be switched from the keyboard.
+Kodra 0.2.1 refines visual coherence and interaction precision across the entire workspace. All auxiliary windows and dialogs now participate fully in the active theme, modal search headers seamlessly integrate into their parent surfaces, and the command dock introduces softened curvature and subtle ambient depth.
 
 ## Highlights
 
-- Choose **Kodra**, **Mist**, or **Ember** with `/themes`. Mist uses native Windows acrylic with a readable translucent tint; all three themes cover menus, Markdown, activity, diffs, status, diagnostics, approvals, and plans.
-- Install validated local JSON themes without editing Kodra's source or exposing arbitrary CSS and scripts.
-- Use `/mode` to switch between Auto, Build, and Plan. Approval and plan reviews grow from the composer and keep focus in the current conversation.
-- Scan a simpler activity hierarchy: `Thinking` when reasoning is present and `Worked` otherwise, with aligned Read, Run, Edit, Write, Search, and other tool rows.
-- Attach only formats supported by the active model. Large code or text pastes become compact inline attachments while their complete content is preserved for the provider and session.
-- Extend slash commands, selection menus, themes, and tool presentation through documented registries with disposal and failure isolation.
-- Run stricter native permission checks. Strict mode asks before every tool; destructive commands remain blocked; critical paths cannot be bypassed by a saved allow rule.
-- Keep long transcripts responsive with bounded Markdown updates, paced response motion, frame-coalesced scrolling, and DOM virtualization.
+- **Universal Window Theming**: Extended full theme compatibility across all auxiliary modal surfaces, including Session Status (`/status`), Provider Diagnostics, Delete Session Confirmation, and API configuration.
+- **Native Frosted Glass on Windows**: Modal dialogs in the Mist theme now render with authentic acrylic frosted-glass translucency (`blur(24px)`) and subtle highlights.
+- **Seamless Modal Search**: Removed the contrasting background from modal search headers, allowing the search area to naturally share the window's unified background and border styling.
+- **Refined Selection Alignment**: Adjusted the menu selection indicator (`›`) and list item padding across command suggestion and provider menus, ensuring the indicator sits snugly and balanced next to item titles.
+- **Softened Command Dock**: Upgraded the bottom input dock with rounded geometry, subtle translucent borders, and a centered SVG vector attachment icon.
+- **Responsive Status Metrics**: Updated context usage tracks, session metrics, and status dialog typography to dynamically respond to semantic theme accents across Mist, Ember, and Kodra.
 
 ## Windows downloads
 
-The candidate release contains one installer and one portable application:
+The release contains one installer and one portable application:
 
-- `Kodra_0.2.0_x64-setup.exe` — recommended current-user NSIS setup.
-- `Kodra_0.2.0_x64-portable.exe` — standalone executable using the same Kodra data and credential locations.
+- `Kodra_0.2.1_x64-setup.exe` — recommended current-user NSIS setup.
+- `Kodra_0.2.1_x64-portable.exe` — standalone executable using the same Kodra data and credential locations.
 - `SHA256SUMS.txt` and `release-manifest.json` — integrity metadata.
 - Source code ZIP and TAR archives — supplied automatically by GitHub.
 
-MSI is no longer a release target. The portable build still requires Microsoft Edge WebView2 Runtime. Neither Windows binary is code-signed yet, so SmartScreen may warn on first launch.
+The portable build requires Microsoft Edge WebView2 Runtime. Binaries are built directly from this repository. As code signing is not yet configured, Windows SmartScreen may present a prompt on first launch.
 
 ## Safety and local data
 
-Provider credentials remain in Windows Credential Manager. Sessions, checkpoints, configuration, and user themes remain local and are preserved by upgrades and normal uninstall behavior. Theme files cannot execute code or access credentials.
-
-## Known release gates
-
-- Code signing is not configured.
-- A clean Windows account or VM install, upgrade, and uninstall pass is still required before describing this candidate as production-ready.
-- Provider model catalogs, quotas, and rate-limit headers vary by provider and account tier; Kodra shows only data the provider actually returns.
-
-This file is used by the manual draft workflow. The workflow creates a draft prerelease and never publishes it without an explicit maintainer action.
+Provider credentials remain protected in Windows Credential Manager. Sessions, checkpoints, configuration, and user themes remain strictly local.
